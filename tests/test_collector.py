@@ -139,6 +139,29 @@ for line in sys.stdin:
                 self.assertEqual(data["quotas"][0]["windowMins"], 300)
                 self.assertNotEqual(data["quotas"][0]["id"], data["quotas"][1]["id"])
 
+    def test_tool_filter_hides_tool_but_keeps_it_listed(self):
+        with tempfile.TemporaryDirectory() as config:
+            env = {**os.environ, "XDG_CONFIG_HOME": config}
+            path = Path(config, "ai-usage/config.json")
+            path.parent.mkdir()
+            path.write_text(json.dumps({"dailyBudget": 30, "tools": {"opencode": {"alertsEnabled": False}}}))
+            result = subprocess.run([sys.executable, str(COLLECTOR), "--set-tool-enabled", "opencode", "off"],
+                                    env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            saved = json.loads(path.read_text())
+            self.assertFalse(saved["tools"]["opencode"]["enabled"])
+            self.assertFalse(saved["tools"]["opencode"]["alertsEnabled"])
+            self.assertEqual(saved["dailyBudget"], 30)
+            bad = subprocess.run([sys.executable, str(COLLECTOR), "--set-tool-enabled", "nope", "off"],
+                                 env=env, capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0)
+        sources = [("opencode", "OpenCode", None), ("claude", "Claude Code", None)]
+        with patch.object(collector, "configuration", return_value={"tools": {"opencode": {"enabled": False}}}):
+            self.assertFalse(collector.tool_enabled("opencode"))
+            self.assertTrue(collector.tool_enabled("claude"))
+            listed = collector.output_payload([], sources)["availableTools"]
+            self.assertEqual([(t["id"], t["enabled"]) for t in listed], [("opencode", False), ("claude", True)])
+
     def test_source_failure_stays_visible(self):
         def fail():
             raise RuntimeError("Sign in required")

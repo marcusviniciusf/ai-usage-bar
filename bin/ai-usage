@@ -53,13 +53,21 @@ def global_budget():
     return {"amount": amount, "period": "daily"} if amount else None
 
 
-def output_payload(tools):
+def tool_enabled(tool_id):
+    return configuration().get("tools", {}).get(tool_id, {}).get("enabled", True) is not False
+
+
+def output_payload(tools, available=None):
+    """`available` lists every detected tool (enabled or not) so the app can offer the filter."""
     budget = global_budget()
+    listed = [{"id": t["id"], "name": t["name"], "enabled": True} for t in tools] if available is None else \
+             [{"id": s[0], "name": s[1], "enabled": tool_enabled(s[0])} for s in available]
     return {"updatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
             # Required numeric field for old app binaries. New UI reads globalBudget.
             "budget": budget["amount"] if budget else 60.0,
             "globalBudget": budget,
             "indicator": configuration().get("indicator", {"mode": "summary"}),
+            "availableTools": listed,
             "tools": tools}
 
 
@@ -440,11 +448,21 @@ def main():
             json.dump(config, f, indent=2)
         print("Tool budget saved")
         return 0
-    with ThreadPoolExecutor() as pool:
-        tools = list(pool.map(collect, detected_sources()))
+    if len(sys.argv) == 4 and sys.argv[1] == "--set-tool-enabled":
+        tool_id, value = sys.argv[2:]
+        if tool_id not in {"codex", *(s[0] for s in SOURCES)} or value not in ("on", "off"):
+            raise ValueError("Usage: ai-usage --set-tool-enabled TOOL on|off")
+        config = configuration()
+        config.setdefault("tools", {}).setdefault(tool_id, {})["enabled"] = value == "on"
+        save_configuration(config)
+        print("Tool filter saved")
+        return 0
     if len(sys.argv) > 1:
         raise ValueError("Unknown command")
-    json.dump(output_payload(tools), sys.stdout)
+    detected = detected_sources()
+    with ThreadPoolExecutor() as pool:
+        tools = list(pool.map(collect, [s for s in detected if tool_enabled(s[0])]))
+    json.dump(output_payload(tools, detected), sys.stdout)
     return 0
 
 

@@ -75,3 +75,12 @@ Render the current cached view without changing preferences:
 Compact by default (about 420pt tall): hero, one row per tool, collapsed 14-day chart. Tap a tool row to expand models, sessions, budget and plan details; per-tool options live in its **Opções** menu. App settings (bar indicator, global budget, launch at login, quit) are in the gear menu, a native menu, so they open instantly.
 Preference changes apply immediately in the UI and are persisted in the background. Cursor events are cached in `~/Library/Caches/ai-usage-cursor-events.json`, so only the last day is refetched (refresh about 2s instead of 9s).
 
+## Tool filter
+
+Pick which detected tools are monitored in the gear menu (**Ferramentas monitoradas**). A hidden tool is not collected, so it drops out of the totals, the budget, alerts and the bar indicator, and refreshes get faster. Per Mac, stored as `tools.<id>.enabled` in the config.
+
+```bash
+ai-usage --set-tool-enabled cursor off
+ai-usage --set-tool-enabled cursor on
+```
+

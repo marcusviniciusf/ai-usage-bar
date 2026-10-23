@@ -21,11 +21,13 @@ struct Usage: Codable {
     let budget: Double?
     var globalBudget: Tool.Budget?
     var indicator: IndicatorConfig?
+    var availableTools: [AvailableTool]?
 
+    struct AvailableTool: Codable, Identifiable { let id: String; let name: String; var enabled: Bool }
     struct IndicatorConfig: Codable { let mode: String; let toolId: String? }
     struct IndicatorPart { let symbol: String; let text: String; var toolId: String? = nil }
     struct IndicatorPresentation { let text: String; let warning: Bool }
-    enum CodingKeys: String, CodingKey { case updatedAt, tools, budget, globalBudget, indicator }
+    enum CodingKeys: String, CodingKey { case updatedAt, tools, budget, globalBudget, indicator, availableTools }
 
     init(from decoder: Decoder) throws {
         let data = try decoder.container(keyedBy: CodingKeys.self)
@@ -33,6 +35,7 @@ struct Usage: Codable {
         tools = try data.decode([Tool].self, forKey: .tools)
         budget = try data.decodeIfPresent(Double.self, forKey: .budget)
         indicator = try data.decodeIfPresent(IndicatorConfig.self, forKey: .indicator)
+        availableTools = try data.decodeIfPresent([AvailableTool].self, forKey: .availableTools)
         if data.contains(.globalBudget) {
             globalBudget = try data.decodeIfPresent(Tool.Budget.self, forKey: .globalBudget)
         } else if let budget, budget > 0 {
@@ -353,6 +356,15 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Hides or shows a tool immediately; enabling needs fresh data, so it also refreshes.
+    func setToolEnabled(id: String, enabled: Bool) {
+        if let index = usage?.availableTools?.firstIndex(where: { $0.id == id }) { usage?.availableTools?[index].enabled = enabled }
+        if !enabled { usage?.tools.removeAll { $0.id == id } }
+        setPreference(arguments: ["--set-tool-enabled", id, enabled ? "on" : "off"], refresh: enabled) { failure in
+            if let failure { self.failure = failure; self.refresh() }
+        }
+    }
+
     func setAlerts(tool: Tool, enabled: Bool) {
         if let index = usage?.tools.firstIndex(where: { $0.id == tool.id }) { usage?.tools[index].alertsEnabled = enabled }
         setPreference(arguments: ["--set-alerts", tool.id, enabled ? "on" : "off"], refresh: false) { failure in
@@ -567,7 +579,9 @@ struct ContentView: View {
                 tools(usage)
                 if !usage.costTools.isEmpty { chart(usage) }
                 if usage.tools.isEmpty {
-                    Text("Nenhuma ferramenta detectada. Abra o Codex, OpenCode, Claude Code ou Cursor para começar.")
+                    Text(usage.availableTools?.isEmpty == false
+                         ? "Todas as ferramentas estão ocultas. Ative alguma na engrenagem."
+                         : "Nenhuma ferramenta detectada. Abra o Codex, OpenCode, Claude Code ou Cursor para começar.")
                         .font(.system(size: 12)).foregroundStyle(Theme.secondary).padding(.vertical, 24)
                 }
             } else {
@@ -635,6 +649,13 @@ struct ContentView: View {
                     ForEach(store.usage?.tools ?? []) { tool in
                         Toggle(tool.name, isOn: Binding(get: { mode == "fixed" && fixedId == tool.id },
                                                         set: { _ in store.setIndicator(mode: "fixed", toolId: tool.id) }))
+                    }
+                }
+            }
+            if let available = store.usage?.availableTools, !available.isEmpty {
+                Section("Ferramentas monitoradas") {
+                    ForEach(available) { tool in
+                        Toggle(tool.name, isOn: Binding(get: { tool.enabled }, set: { store.setToolEnabled(id: tool.id, enabled: $0) }))
                     }
                 }
             }
