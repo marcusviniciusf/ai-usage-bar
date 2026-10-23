@@ -84,3 +84,11 @@ ai-usage --set-tool-enabled cursor off
 ai-usage --set-tool-enabled cursor on
 ```
 
+## Pinning up to two tools in the menu bar
+
+Gear menu → **Indicador da barra** → **Fixar até 2 ferramentas**. Each pinned tool shows its icon plus a compact value (remaining % for quota tools, today's cost for the others). A third pin replaces the oldest; unpinning everything returns to the summary. Tools hidden with the tool filter are skipped.
+
+```bash
+ai-usage --set-indicator pinned claude codex   # one or two tools
+```
+

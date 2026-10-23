@@ -143,6 +143,20 @@ for line in sys.stdin:
                 self.assertEqual(data["quotas"][0]["windowMins"], 300)
                 self.assertNotEqual(data["quotas"][0]["id"], data["quotas"][1]["id"])
 
+    def test_pinned_indicator_accepts_one_or_two_known_tools(self):
+        with tempfile.TemporaryDirectory() as config:
+            env = {**os.environ, "XDG_CONFIG_HOME": config}
+            def run(*args):
+                return subprocess.run([sys.executable, str(COLLECTOR), *args], env=env, capture_output=True, text=True)
+            self.assertEqual(run("--set-indicator", "pinned", "claude", "codex").returncode, 0)
+            saved = json.loads(Path(config, "ai-usage/config.json").read_text())
+            self.assertEqual(saved["indicator"], {"mode": "pinned", "toolId": None, "toolIds": ["claude", "codex"]})
+            self.assertEqual(run("--set-indicator", "pinned", "cursor").returncode, 0)
+            self.assertNotEqual(run("--set-indicator", "pinned", "claude", "codex", "cursor").returncode, 0)
+            self.assertNotEqual(run("--set-indicator", "pinned", "claude", "claude").returncode, 0)
+            self.assertNotEqual(run("--set-indicator", "pinned", "nope").returncode, 0)
+            self.assertNotEqual(run("--set-indicator", "pinned").returncode, 0)
+
     def test_tool_filter_hides_tool_but_keeps_it_listed(self):
         with tempfile.TemporaryDirectory() as config:
             env = {**os.environ, "XDG_CONFIG_HOME": config}

@@ -24,7 +24,7 @@ struct Usage: Codable {
     var availableTools: [AvailableTool]?
 
     struct AvailableTool: Codable, Identifiable { let id: String; let name: String; var enabled: Bool }
-    struct IndicatorConfig: Codable { let mode: String; let toolId: String? }
+    struct IndicatorConfig: Codable { let mode: String; let toolId: String?; var toolIds: [String]? = nil }
     struct IndicatorPart { let symbol: String; let text: String; var toolId: String? = nil }
     struct IndicatorPresentation { let text: String; let warning: Bool }
     enum CodingKeys: String, CodingKey { case updatedAt, tools, budget, globalBudget, indicator, availableTools }
@@ -47,6 +47,11 @@ struct Usage: Codable {
     func total(_ window: Window) -> Double { costTools.reduce(0) { $0 + $1.amount(window) } }
     var hasPartialCosts: Bool { tools.contains { $0.mode != "quota" && $0.error != nil } }
 
+    /// Pinned tools minus the ones the user hid with the tool filter.
+    var pinnedIds: [String] {
+        (indicator?.toolIds ?? []).filter { id in availableTools?.first(where: { $0.id == id })?.enabled != false }
+    }
+
     var compactIndicatorParts: [IndicatorPart] {
         func compact(_ tool: Tool) -> IndicatorPart {
             if tool.error != nil { return IndicatorPart(symbol: tool.symbol, text: "—", toolId: tool.id) }
@@ -58,6 +63,11 @@ struct Usage: Codable {
         }
         if indicator?.mode == "fixed", let id = indicator?.toolId {
             return [tools.first(where: { $0.id == id }).map(compact) ?? IndicatorPart(symbol: "exclamationmark.circle", text: "—")]
+        }
+        if indicator?.mode == "pinned", case let ids = pinnedIds, !ids.isEmpty {
+            return ids.prefix(2).map { id in
+                tools.first(where: { $0.id == id }).map(compact) ?? IndicatorPart(symbol: "exclamationmark.circle", text: "—")
+            }
         }
         if indicator?.mode == "urgent" {
             var limits: [(Double, String, String?)] = []
@@ -110,10 +120,21 @@ struct Usage: Codable {
         let text: String
         if mode == "fixed", let id = indicator?.toolId {
             text = tools.first(where: { $0.id == id }).map(label) ?? "\(id.capitalized) indisponível"
+        } else if mode == "pinned", case let ids = pinnedIds, !ids.isEmpty {
+            text = ids.map { id in tools.first(where: { $0.id == id }).map(label) ?? "\(id.capitalized) indisponível" }.joined(separator: " · ")
         } else if mode == "urgent", let highest {
             text = highest.1
         } else {
             text = tools.isEmpty ? "Sem ferramentas" : tools.map(label).joined(separator: " · ")
+        }
+        if mode == "pinned", case let ids = pinnedIds, !ids.isEmpty {
+            let selected = tools.filter { ids.contains($0.id) }
+            let isHot = selected.contains { tool in
+                let quotaWarning = tool.quotas?.contains { $0.usedPercent >= 80 } ?? false
+                let budgetWarning = tool.budget.map { (tool.period($0) / $0.amount) >= 0.8 } ?? false
+                return tool.error != nil || quotaWarning || budgetWarning
+            }
+            return IndicatorPresentation(text: text, warning: selected.count < ids.count || isHot)
         }
         if mode == "fixed" {
             let selected = tools.first { $0.id == indicator?.toolId }
@@ -181,6 +202,8 @@ struct Tool: Codable, Identifiable {
     struct Chat: Codable, Identifiable { let name: String; let cost: Double; let model: String; var id: String { name + model } }
     struct Day: Codable { let date: String; let cost: Double }
     struct Model: Codable, Identifiable { let name: String; let cost: Double; var id: String { name } }
+
+    func period(_ budget: Budget) -> Double { budget.period == "monthly" ? month : today }
 
     func amount(_ window: Window) -> Double {
         switch window {
@@ -349,11 +372,24 @@ final class Store: ObservableObject {
     }
 
     // Preference changes show up immediately; the collector only persists them (and a failure forces a refresh).
-    func setIndicator(mode: String, toolId: String? = nil) {
-        usage?.indicator = Usage.IndicatorConfig(mode: mode, toolId: toolId)
-        setPreference(arguments: ["--set-indicator", mode] + (toolId.map { [$0] } ?? []), refresh: false) { failure in
+    func setIndicator(mode: String, toolId: String? = nil, toolIds: [String]? = nil) {
+        usage?.indicator = Usage.IndicatorConfig(mode: mode, toolId: toolId, toolIds: toolIds)
+        setPreference(arguments: ["--set-indicator", mode] + (toolId.map { [$0] } ?? []) + (toolIds ?? []), refresh: false) { failure in
             if let failure { self.failure = failure; self.refresh() }
         }
+    }
+
+    /// Pins up to two tools in the menu bar; a third pin replaces the oldest. No pins falls back to the summary.
+    func togglePinned(_ id: String, on: Bool) {
+        let indicator = usage?.indicator
+        var ids = indicator?.mode == "pinned" ? (indicator?.toolIds ?? [])
+                : indicator?.mode == "fixed" ? [indicator?.toolId].compactMap { $0 } : []
+        ids.removeAll { $0 == id }
+        if on {
+            ids.append(id)
+            if ids.count > 2 { ids.removeFirst(ids.count - 2) }
+        }
+        if ids.isEmpty { setIndicator(mode: "summary") } else { setIndicator(mode: "pinned", toolIds: ids) }
     }
 
     /// Hides or shows a tool immediately; enabling needs fresh data, so it also refreshes.
@@ -640,15 +676,16 @@ struct ContentView: View {
 
     private var settingsMenu: some View {
         let mode = store.usage?.indicator?.mode ?? "summary"
-        let fixedId = store.usage?.indicator?.toolId
+        let pinned = mode == "pinned" ? (store.usage?.indicator?.toolIds ?? [])
+                   : mode == "fixed" ? [store.usage?.indicator?.toolId].compactMap { $0 } : []
         return Menu {
             Section("Indicador da barra") {
                 Toggle("Resumo combinado", isOn: Binding(get: { mode == "summary" }, set: { _ in store.setIndicator(mode: "summary") }))
                 Toggle("Mais próximo do limite", isOn: Binding(get: { mode == "urgent" }, set: { _ in store.setIndicator(mode: "urgent") }))
-                Menu("Fixar uma ferramenta") {
+                Menu("Fixar até 2 ferramentas") {
                     ForEach(store.usage?.tools ?? []) { tool in
-                        Toggle(tool.name, isOn: Binding(get: { mode == "fixed" && fixedId == tool.id },
-                                                        set: { _ in store.setIndicator(mode: "fixed", toolId: tool.id) }))
+                        Toggle(tool.name, isOn: Binding(get: { pinned.contains(tool.id) },
+                                                        set: { store.togglePinned(tool.id, on: $0) }))
                     }
                 }
             }

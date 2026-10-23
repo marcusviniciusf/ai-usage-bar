@@ -58,6 +58,21 @@ new_test = common + '''
         check(try read().compactIndicatorParts[0].text == "70%")
         json["indicator"] = ["mode": "fixed", "toolId": "missing"]
         check(try read().indicatorPresentation.text.contains("indisponível"))
+        json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "opencode"]]
+        check(try read().compactIndicatorParts.count == 2)
+        check(try read().compactIndicatorParts[0].text == "70%")
+        check(try read().indicatorPresentation.text == "Codex 70% livre · OpenCode $8.00")
+        check(try read().indicatorPresentation.warning)
+        json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "opencode", "extra"]]
+        check(try read().compactIndicatorParts.count == 2)
+        json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "missing"]]
+        check(try read().indicatorPresentation.text.contains("indisponível"))
+        check(try read().indicatorPresentation.warning)
+        json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "opencode"]]
+        json["availableTools"] = [["id": "codex", "name": "Codex", "enabled": false], ["id": "opencode", "name": "OpenCode", "enabled": true]]
+        check(try read().compactIndicatorParts.count == 1)
+        check(try read().indicatorPresentation.text == "OpenCode $8.00")
+        json.removeValue(forKey: "availableTools")
         json["globalBudget"] = NSNull()
         check(try read().globalBudget == nil)
         json.removeValue(forKey: "globalBudget")

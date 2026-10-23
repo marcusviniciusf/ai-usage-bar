@@ -415,13 +415,18 @@ def main():
         save_configuration(config)
         print("Global daily budget saved")
         return 0
-    if len(sys.argv) in (3, 4) and sys.argv[1] == "--set-indicator":
-        mode = sys.argv[2]
-        tool_id = sys.argv[3] if len(sys.argv) == 4 else None
-        if mode not in ("summary", "fixed", "urgent") or (mode == "fixed" and tool_id not in {"codex", *(s[0] for s in SOURCES)}):
-            raise ValueError("Usage: ai-usage --set-indicator summary|urgent|fixed [TOOL]")
+    if len(sys.argv) >= 3 and sys.argv[1] == "--set-indicator":
+        mode, ids = sys.argv[2], sys.argv[3:]
+        known = {"codex", *(s[0] for s in SOURCES)}
+        valid = ((mode in ("summary", "urgent") and len(ids) <= 1)
+                 or (mode == "fixed" and len(ids) == 1 and ids[0] in known)
+                 or (mode == "pinned" and 1 <= len(ids) <= 2 and len(set(ids)) == len(ids) and set(ids) <= known))
+        if not valid:
+            raise ValueError("Usage: ai-usage --set-indicator summary|urgent|fixed TOOL|pinned TOOL [TOOL]")
         config = configuration()
-        config["indicator"] = {"mode": mode, "toolId": tool_id}
+        config["indicator"] = {"mode": mode, "toolId": ids[0] if mode == "fixed" else None}
+        if mode == "pinned":
+            config["indicator"]["toolIds"] = ids
         save_configuration(config)
         print("Indicator preference saved")
         return 0
