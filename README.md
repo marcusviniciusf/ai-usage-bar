@@ -92,3 +92,9 @@ Gear menu → **Indicador da barra** → **Fixar até 2 ferramentas**. Each pinn
 ai-usage --set-indicator pinned claude codex   # one or two tools
 ```
 
+## Language
+
+English, Portuguese (Brasil) and Spanish. The default follows the device's first supported language (anything else falls back to English). Pick another one in the gear menu → **Language**; the choice is per Mac and applies immediately, including notifications and dates.
+To add a language, add a case to `AppLanguage` and a table in `L10n.tables` (English strings are the keys; missing keys fall back to English). Quota windows ("5 hours", "Weekly") are named by the app from the window length, not by the collector.
+Render a screenshot in another language without changing the saved choice: `AIUsage --snapshot out.png Today --lang es`.
+

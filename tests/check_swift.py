@@ -22,6 +22,7 @@ common = '''
 @main struct CompatibilityCheck {
     @MainActor static func main() throws {
         func check(_ condition: Bool) { Swift.precondition(condition) }
+        UserDefaults.standard.set("pt", forKey: "language")
         let url = URL(fileURLWithPath: CommandLine.arguments[1])
         let data = try Data(contentsOf: url)
         let decoder = JSONDecoder()
@@ -73,6 +74,20 @@ new_test = common + '''
         check(try read().compactIndicatorParts.count == 1)
         check(try read().indicatorPresentation.text == "OpenCode $8.00")
         json.removeValue(forKey: "availableTools")
+        json["indicator"] = ["mode": "summary"]
+        UserDefaults.standard.set("en", forKey: "language")
+        check(try read().indicatorPresentation.text == "Codex 70% left · OpenCode $8.00")
+        UserDefaults.standard.set("es", forKey: "language")
+        check(try read().indicatorPresentation.text == "Codex 70% libre · OpenCode $8.00")
+        UserDefaults.standard.set("pt", forKey: "language")
+        check(try read().indicatorPresentation.text == "Codex 70% livre · OpenCode $8.00")
+        check(L10n.translate("Unknown key %@", ["x"]) == "Unknown key x")
+        let weekly = Tool.Quota(id: "w", label: "Semanal", usedPercent: 10, resetsAt: nil, windowMins: 10080)
+        check(weekly.title == "Semanal" && weekly.shortTitle == "Sem")
+        UserDefaults.standard.set("en", forKey: "language")
+        check(weekly.title == "Weekly" && weekly.shortTitle == "Wk")
+        check(Tool.Quota(id: "h", label: "5 horas", usedPercent: 10, resetsAt: nil, windowMins: 300).title == "5 hours")
+        UserDefaults.standard.set("pt", forKey: "language")
         json["globalBudget"] = NSNull()
         check(try read().globalBudget == nil)
         json.removeValue(forKey: "globalBudget")
