@@ -89,9 +89,13 @@ class CollectorTests(unittest.TestCase):
         self.assertTrue(collector.is_free_model("provider/free"))
 
     def test_absent_tools_hidden_and_data_tools_detected(self):
+        real_isdir = os.path.isdir
+        # Detection also checks the absolute /Applications path, so hide it for machines that have Cursor installed.
+        without_cursor_app = lambda path: False if path == "/Applications/Cursor.app" else real_isdir(path)
         with tempfile.TemporaryDirectory() as home, patch.object(collector, "HOME", home), \
                 patch.object(collector, "codex_binary", return_value=None), \
                 patch.object(collector.shutil, "which", return_value=None), \
+                patch.object(os.path, "isdir", side_effect=without_cursor_app), \
                 patch.dict(os.environ, {"XDG_DATA_HOME": home + "/data", "CLAUDE_CONFIG_DIR": home + "/claude"}):
             self.assertEqual(collector.detected_sources(), [])
             Path(home, "data/opencode").mkdir(parents=True)
