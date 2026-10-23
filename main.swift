@@ -21,6 +21,14 @@ struct Usage: Codable {
     let tools: [Tool]
 
     func total(_ window: Window) -> Double { tools.reduce(0) { $0 + $1.amount(window) } }
+
+    /// Combined spend per hour right now (Cursor last hour, Claude active 5h block).
+    var rate: Double { tools.reduce(0) { $0 + ($1.rate ?? 0) } }
+}
+
+func duration(hours: Double) -> String {
+    let minutes = Int((hours * 60).rounded())
+    return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(max(minutes, 1))m"
 }
 
 struct Tool: Codable, Identifiable {
@@ -35,7 +43,10 @@ struct Tool: Codable, Identifiable {
     let models: [Model]
     let limit: Double?
     let periodEnd: String?
+    let rate: Double?
+    let chats: [Chat]?
 
+    struct Chat: Codable, Identifiable { let name: String; let cost: Double; let model: String; var id: String { name + model } }
     struct Day: Codable { let date: String; let cost: Double }
     struct Model: Codable, Identifiable { let name: String; let cost: Double; var id: String { name } }
 
@@ -161,7 +172,11 @@ final class Store: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = level >= 1 ? "AI spend over budget" : "Approaching daily AI budget"
         content.subtitle = "Today \(total.dollars) of \(usage.budget.shortDollars) (\(Int((total / usage.budget * 100).rounded()))%)"
-        content.body = usage.tools.map { "\($0.name) \($0.today.dollars)" }.joined(separator: " · ")
+        var body = usage.tools.map { "\($0.name) \($0.today.dollars)" }.joined(separator: " · ")
+        if level < 1, usage.rate > 0.5 {
+            body += "\nAt \(usage.rate.dollars)/h you hit the limit in ~\(duration(hours: (usage.budget - total) / usage.rate))"
+        }
+        content.body = body
         content.sound = .default
         let request = UNNotificationRequest(identifier: "budget-\(level)", content: content, trigger: nil)
         let center = UNUserNotificationCenter.current()
@@ -438,11 +453,25 @@ struct ContentView: View {
                 }
             }
             .font(.system(size: 11, weight: .medium))
+
+            pace(usage, total: total, budgetToDate: budgetToDate)
         }
         .background(
             RadialGradient(colors: [status.opacity(0.18), .clear], center: .topTrailing, startRadius: 0, endRadius: 260)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         )
+    }
+
+    @ViewBuilder
+    private func pace(_ usage: Usage, total: Double, budgetToDate: Double) -> some View {
+        if window == .today, usage.rate > 0.5 {
+            let left = budgetToDate - total
+            Label(left > 0 ? "\(usage.rate.dollars)/h now · limit in ~\(duration(hours: left / usage.rate))"
+                           : "Burning \(usage.rate.dollars)/h right now",
+                  systemImage: "speedometer")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(left > 0 && left / usage.rate < 1 ? Theme.bad : Theme.secondary)
+        }
     }
 
     private func tools(_ usage: Usage) -> some View {
@@ -469,7 +498,10 @@ struct ContentView: View {
                     if let error = tool.error {
                         Text(error).font(.system(size: 10.5)).foregroundStyle(Theme.bad).lineLimit(1)
                     } else {
-                        Text(share > 0 && share < 1 ? "<1% of spend" : "\(Int(share.rounded()))% of spend")
+                        let spend = share > 0 && share < 1 ? "<1% of spend" : "\(Int(share.rounded()))% of spend"
+                        Text((tool.rate ?? 0) > 0.5
+                             ? "\(spend.replacingOccurrences(of: " of spend", with: "")) · \((tool.rate ?? 0).dollars)/h"
+                             : spend)
                             .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
                     }
                 }
@@ -505,6 +537,19 @@ struct ContentView: View {
                                 .frame(width: max(4, 60 * model.cost / max(top, 0.01)), height: 4)
                             Text(model.cost.dollars).font(.system(size: 11)).monospacedDigit()
                                 .foregroundStyle(Theme.secondary).frame(width: 58, alignment: .trailing)
+                        }
+                    }
+                    if let chats = tool.chats, !chats.isEmpty {
+                        Text("TOP CHATS TODAY").font(.system(size: 9.5, weight: .semibold)).tracking(0.6)
+                            .foregroundStyle(Theme.tertiary).padding(.top, 4)
+                        ForEach(chats) { chat in
+                            HStack(spacing: 8) {
+                                Text(chat.name).font(.system(size: 11)).foregroundStyle(Theme.primary.opacity(0.85))
+                                    .lineLimit(1).truncationMode(.tail)
+                                Spacer()
+                                Text(chat.cost.dollars).font(.system(size: 11)).monospacedDigit()
+                                    .foregroundStyle(Theme.secondary)
+                            }
                         }
                     }
                 }
@@ -607,6 +652,26 @@ struct ContentView: View {
     }
 }
 
+struct AppIcon: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 185, style: .continuous)
+                .fill(LinearGradient(colors: [Color(hex: 0x23273A), Color(hex: 0x0B0C10)], startPoint: .top, endPoint: .bottom))
+            RoundedRectangle(cornerRadius: 185, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 4)
+            RadialGradient(colors: [Color(hex: 0x7C8CFF, opacity: 0.35), .clear], center: .topLeading, startRadius: 0, endRadius: 620)
+                .clipShape(RoundedRectangle(cornerRadius: 185, style: .continuous))
+            Image(systemName: "sparkles")
+                .font(.system(size: 430, weight: .semibold))
+                .foregroundStyle(LinearGradient(colors: [Color(hex: 0x9AA6FF), Color(hex: 0xA46BFF), Color(hex: 0xFF9A6B)],
+                                                startPoint: .topLeading, endPoint: .bottomTrailing))
+        }
+        .frame(width: 824, height: 824)
+        .shadow(color: .black.opacity(0.45), radius: 24, y: 12)
+        .frame(width: 1024, height: 1024)
+    }
+}
+
 struct MenuLabel: View {
     @ObservedObject var store: Store
     var body: some View {
@@ -624,6 +689,16 @@ struct AIUsageApp: App {
     @StateObject private var store = Store()
 
     init() {
+        // `AIUsage --icon out.png` renders the 1024px app icon and exits (used by build.sh).
+        if let flag = CommandLine.arguments.firstIndex(of: "--icon") {
+            let renderer = ImageRenderer(content: AppIcon())
+            renderer.scale = 1
+            if let tiff = renderer.nsImage?.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]))
+            }
+            exit(0)
+        }
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
         // `AIUsage --test-alert` sends both alert levels with the cached numbers and exits.
         if CommandLine.arguments.contains("--test-alert"), let usage = Store(cachedOnly: true).usage {

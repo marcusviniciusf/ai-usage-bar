@@ -29,3 +29,9 @@ After changing `main.swift`, run `./build.sh`. After `git pull` on another Mac, 
 Notifications at 80% and 100% of the daily budget, each at most once per day (checked every 10 min).
 Test them with the cached numbers: `~/Applications/AI\ Usage.app/Contents/MacOS/AIUsage --test-alert`.
 Native notifications from "AI Usage" (System Settings → Notifications → AI Usage).
+
+## Pace
+
+Hero shows combined $/h (Cursor last hour, Claude active 5h block) and how long until the daily budget at that pace.
+The 80% notification includes the same ETA. Expanding Cursor lists today's most expensive chats.
+`build.sh` renders the app icon itself (`AIUsage --icon`), no assets to keep.

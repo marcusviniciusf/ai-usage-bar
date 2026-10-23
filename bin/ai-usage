@@ -64,7 +64,9 @@ def cursor():
         raise RuntimeError(f"Cursor dashboard HTTP {err.code}. Reopen Cursor.")
 
     by_day, by_model = defaultdict(float), defaultdict(float)
-    period_total = 0.0
+    by_chat = defaultdict(lambda: [0.0, ""])
+    period_total = last_hour = 0.0
+    hour_ago_ms = (time.time() - 3600) * 1000
     for e in events:
         ts = int(e.get("timestamp") or 0)
         day = datetime.fromtimestamp(ts / 1000).date()
@@ -72,8 +74,16 @@ def cursor():
         by_day[day] += cost
         if ts >= period_ms:
             period_total += cost
+        if ts >= hour_ago_ms:
+            last_hour += cost
         if day == today:
             by_model[e.get("model") or "?"] += cost
+            chat = by_chat[e.get("conversationId") or "none"]
+            chat[0] += cost
+            chat[1] = e.get("model") or "?"
+
+    top_chats = sorted(by_chat.items(), key=lambda kv: -kv[1][0])[:3]
+    names = spend.titles([cid for cid, _ in top_chats])
     return {
         "today": by_day.get(today, 0.0),
         "week": sum(c for d, c in by_day.items() if d >= week_start),
@@ -83,14 +93,31 @@ def cursor():
         "models": top_models(by_model),
         "limit": cursor_limit(spend, period_start),
         "periodEnd": datetime.fromtimestamp(period_end / 1000, tz=timezone.utc).date().isoformat() if period_end else None,
+        "rate": last_hour,
+        "chats": [{"name": names[cid] if cid != "none" else "No chat (inline / tab)", "cost": round(c, 4), "model": m}
+                  for cid, (c, m) in top_chats if c > 0],
     }
+
+
+def ccusage_json(*args):
+    out = subprocess.run([CCUSAGE, *args, "--json"], capture_output=True, text=True, env=ENV, timeout=180).stdout
+    return json.loads(out[out.find("{"):out.rfind("}") + 1])
+
+
+def burn_rate(agent):
+    """Cost per hour of the active 5h billing block, 0 when idle or unsupported."""
+    try:
+        blocks = ccusage_json(agent, "blocks", "--active").get("blocks") or []
+        return float(((blocks[0] if blocks else {}).get("burnRate") or {}).get("costPerHour") or 0)
+    except (ValueError, IndexError, subprocess.SubprocessError):
+        return 0.0
 
 
 def ccusage(agent):
     since = min(history_start, week_start, month_start).strftime("%Y%m%d")
-    out = subprocess.run([CCUSAGE, agent, "daily", "--json", "--since", since],
-                         capture_output=True, text=True, env=ENV, timeout=180).stdout
-    days = json.loads(out[out.find("{"):out.rfind("}") + 1]).get("daily", [])
+    with ThreadPoolExecutor() as pool:
+        rate = pool.submit(burn_rate, agent)
+        days = ccusage_json(agent, "daily", "--since", since).get("daily", [])
 
     by_day, by_model = defaultdict(float), defaultdict(float)
     for d in days:
@@ -106,6 +133,7 @@ def ccusage(agent):
         "monthLabel": f"Since {month_start.strftime('%b %-d')}",
         "daily": history(by_day),
         "models": top_models(by_model),
+        "rate": rate.result(),
     }
 
 
