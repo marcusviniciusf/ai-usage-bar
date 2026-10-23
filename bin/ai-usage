@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Collect today/week/month AI spend for Cursor, Claude Code and OpenCode as JSON.
+
+Cursor comes from ~/.local/bin/cursor-spend (dashboard API); Claude and OpenCode from ccusage.
+Read by the AI Usage menu bar app. Prints one JSON object to stdout.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
+from importlib.machinery import SourceFileLoader
+
+HOME = os.path.expanduser("~")
+DAILY_BUDGET = float(os.environ.get("AI_USAGE_DAILY_BUDGET", "60"))
+HISTORY_DAYS = 14
+ENV = {**os.environ, "PATH": f"{HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
+CCUSAGE = shutil.which("ccusage", path=ENV["PATH"]) or "ccusage"
+
+today = date.today()
+week_start = today - timedelta(days=today.weekday())
+month_start = today.replace(day=1)
+history_start = today - timedelta(days=HISTORY_DAYS - 1)
+
+
+def history(by_day):
+    return [{"date": (history_start + timedelta(days=i)).isoformat(),
+             "cost": round(by_day.get(history_start + timedelta(days=i), 0.0), 4)}
+            for i in range(HISTORY_DAYS)]
+
+
+def top_models(by_model):
+    return [{"name": n.split("/")[-1], "cost": round(c, 4)}
+            for n, c in sorted(by_model.items(), key=lambda kv: -kv[1])[:5] if c > 0]
+
+
+def cursor_limit(spend, period_start):
+    """Plan spend limit from the editor's cached usage snapshot, in dollars."""
+    snapshot = json.loads(spend.read_state("aiSettings.enterprisePlanUsageSnapshot") or "{}")
+    for chart in snapshot.get("charts", []):
+        if chart.get("periodStartMs") == period_start:
+            cents = json.loads(chart.get("response") or "{}").get("effectiveLimitCents")
+            return cents / 100 if cents else None
+    return None
+
+
+def cursor():
+    spend = SourceFileLoader("cursor_spend", os.path.join(HOME, ".local/bin/cursor-spend")).load_module()
+    token = spend.access_token()
+    team, user, period_start, period_end = spend.identity()
+    if not token or not team or not user:
+        raise RuntimeError("Not signed in to Cursor")
+    period_ms = period_start or int(datetime.combine(month_start, datetime.min.time()).timestamp() * 1000)
+    period_label = datetime.fromtimestamp(period_ms / 1000, tz=timezone.utc).strftime("%b %-d")
+    start = min(datetime.fromtimestamp(period_ms / 1000).date(), history_start, week_start)
+    start_ms = int(datetime.combine(start, datetime.min.time()).timestamp() * 1000)
+    try:
+        events = spend.fetch(token, team, user, start_ms, int(time.time() * 1000) + 60_000)
+    except spend.urllib.error.HTTPError as err:
+        raise RuntimeError(f"Cursor dashboard HTTP {err.code}. Reopen Cursor.")
+
+    by_day, by_model = defaultdict(float), defaultdict(float)
+    period_total = 0.0
+    for e in events:
+        ts = int(e.get("timestamp") or 0)
+        day = datetime.fromtimestamp(ts / 1000).date()
+        cost = spend.dollars(e)
+        by_day[day] += cost
+        if ts >= period_ms:
+            period_total += cost
+        if day == today:
+            by_model[e.get("model") or "?"] += cost
+    return {
+        "today": by_day.get(today, 0.0),
+        "week": sum(c for d, c in by_day.items() if d >= week_start),
+        "month": period_total,
+        "monthLabel": f"Billing period since {period_label}",
+        "daily": history(by_day),
+        "models": top_models(by_model),
+        "limit": cursor_limit(spend, period_start),
+        "periodEnd": datetime.fromtimestamp(period_end / 1000, tz=timezone.utc).date().isoformat() if period_end else None,
+    }
+
+
+def ccusage(agent):
+    since = min(history_start, week_start, month_start).strftime("%Y%m%d")
+    out = subprocess.run([CCUSAGE, agent, "daily", "--json", "--since", since],
+                         capture_output=True, text=True, env=ENV, timeout=180).stdout
+    days = json.loads(out[out.find("{"):out.rfind("}") + 1]).get("daily", [])
+
+    by_day, by_model = defaultdict(float), defaultdict(float)
+    for d in days:
+        day = date.fromisoformat(d["date"])
+        by_day[day] += d.get("totalCost", 0)
+        if day == today:
+            for m in d.get("modelBreakdowns", []):
+                by_model[m["modelName"]] += m.get("cost", 0)
+    return {
+        "today": by_day.get(today, 0.0),
+        "week": sum(c for d, c in by_day.items() if d >= week_start),
+        "month": sum(c for d, c in by_day.items() if d >= month_start),
+        "monthLabel": f"Since {month_start.strftime('%b %-d')}",
+        "daily": history(by_day),
+        "models": top_models(by_model),
+    }
+
+
+SOURCES = [("cursor", "Cursor", cursor), ("claude", "Claude Code", lambda: ccusage("claude")),
+           ("opencode", "OpenCode", lambda: ccusage("opencode"))]
+
+
+def collect(source):
+    tool_id, name, fn = source
+    try:
+        data = fn()
+        data = {k: round(v, 4) if isinstance(v, float) else v for k, v in data.items()}
+        return {"id": tool_id, "name": name, "error": None, **data}
+    except Exception as err:  # one broken source must not blank the whole bar
+        return {"id": tool_id, "name": name, "error": str(err) or type(err).__name__,
+                "today": 0, "week": 0, "month": 0, "monthLabel": "", "daily": history({}), "models": []}
+
+
+def main():
+    with ThreadPoolExecutor() as pool:
+        tools = list(pool.map(collect, SOURCES))
+    json.dump({"updatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
+               "budget": DAILY_BUDGET, "tools": tools}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

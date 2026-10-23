@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Show your own Cursor usage (list-price dollars) for today, this week and this month.
+
+Reads the editor's signed-in session from the local state DB (read-only) and calls the
+same dashboard endpoint the usage page uses. Nothing is written or posted.
+
+  cursor-spend                 today + week + month summary
+  cursor-spend today|week|month   detail for one window (models, chats, biggest requests)
+  cursor-spend --budget 20     exit 2 and print a warning when today is over $20
+"""
+import base64
+import hashlib
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import urllib.request
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+STORAGE = os.path.expanduser("~/Library/Application Support/Cursor/User/globalStorage")
+STATE_DB = os.path.join(STORAGE, "state.vscdb")
+SEARCH_DB = os.path.join(STORAGE, "conversation-search.db")
+API = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetFilteredUsageEvents"
+
+
+def read_state(key):
+    db = sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True)
+    row = db.execute("SELECT value FROM ItemTable WHERE key=?", (key,)).fetchone()
+    db.close()
+    if not row:
+        return None
+    value = row[0]
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def access_token():
+    """Cursor stores the token as Electron safeStorage ciphertext: cursor-safe-storage:v1:<b64 of v10 + AES-128-CBC>."""
+    value = read_state("cursorAuth/accessToken")
+    if not value or not value.startswith("cursor-safe-storage:"):
+        return value
+    password = subprocess.run(
+        ["/usr/bin/security", "find-generic-password", "-s", "Cursor Safe Storage", "-w"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if not password:
+        return None
+    key = hashlib.pbkdf2_hmac("sha1", password.encode(), b"saltysalt", 1003, 16)
+    blob = base64.b64decode(value.split(":", 2)[2] + "==")
+    plain = subprocess.run(
+        ["/usr/bin/openssl", "enc", "-d", "-aes-128-cbc", "-K", key.hex(), "-iv", "20" * 16],
+        input=blob[3:], capture_output=True,
+    ).stdout
+    return plain.decode(errors="replace").strip() or None
+
+
+def identity():
+    snapshot = json.loads(read_state("aiSettings.enterprisePlanUsageSnapshot") or "{}")
+    team = snapshot.get("teamId") or json.loads(read_state("cursorAuth/cachedTeam") or "{}").get("teamId")
+    return team, snapshot.get("userId"), snapshot.get("periodStartMs"), snapshot.get("periodEndMs")
+
+
+def fetch(token, team, user, start_ms, end_ms):
+    events, page = [], 1
+    while True:
+        body = {
+            "teamId": team,
+            "userId": user,
+            "startDate": str(start_ms),
+            "endDate": str(end_ms),
+            "page": page,
+            "pageSize": 500,
+        }
+        req = urllib.request.Request(
+            API,
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Connect-Protocol-Version": "1",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode() or "{}")
+        batch = data.get("usageEventsDisplay") or []
+        events += batch
+        if len(batch) < 500 or page >= 40:
+            return events
+        page += 1
+
+
+def dollars(e):
+    return float(e.get("chargedCents") or 0) / 100
+
+
+def tokens(e):
+    t = e.get("tokenUsage") or {}
+    return {k: int(t.get(k) or 0) for k in ("inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens")}
+
+
+def titles(ids):
+    try:
+        db = sqlite3.connect(f"file:{SEARCH_DB}?mode=ro", uri=True)
+        out = {}
+        for cid in ids:
+            row = db.execute("SELECT title FROM conversations WHERE id=?", (cid,)).fetchone()
+            out[cid] = row[0] if row else cid[:8]
+        db.close()
+        return out
+    except sqlite3.Error:
+        return {cid: cid[:8] for cid in ids}
+
+
+def summarize(events):
+    total = sum(dollars(e) for e in events)
+    toks = defaultdict(int)
+    for e in events:
+        for k, v in tokens(e).items():
+            toks[k] += v
+    fast = sum(dollars(e) for e in events if "fast" in (e.get("model") or ""))
+    return total, toks, fast
+
+
+def window_bounds(name, period_start_ms):
+    now = datetime.now()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if name == "today":
+        start = today
+    elif name == "week":
+        start = today - timedelta(days=today.weekday())
+    else:
+        start = datetime.fromtimestamp(period_start_ms / 1000) if period_start_ms else today.replace(day=1)
+    return int(start.timestamp() * 1000), int(now.timestamp() * 1000) + 60_000
+
+
+def detail(label, events):
+    total, toks, fast = summarize(events)
+    print(f"\n{label}: ${total:,.2f} in {len(events)} requests"
+          f"  (Fast models ${fast:,.2f}, {100 * fast / total if total else 0:.0f}%)")
+    cache = toks["cacheReadTokens"]
+    all_toks = sum(toks.values()) or 1
+    print(f"  tokens: cache read {cache / 1e6:,.1f}M ({100 * cache / all_toks:.0f}%), "
+          f"input {toks['inputTokens'] / 1e6:,.1f}M, output {toks['outputTokens'] / 1e6:,.2f}M")
+
+    by_model = defaultdict(lambda: [0, 0.0])
+    by_chat = defaultdict(lambda: [0, 0.0, ""])
+    for e in events:
+        m = e.get("model") or "?"
+        by_model[m][0] += 1
+        by_model[m][1] += dollars(e)
+        cid = e.get("conversationId") or "none"
+        by_chat[cid][0] += 1
+        by_chat[cid][1] += dollars(e)
+        by_chat[cid][2] = m
+
+    print("  by model:")
+    for m, (n, d) in sorted(by_model.items(), key=lambda kv: -kv[1][1])[:8]:
+        print(f"    ${d:9,.2f}  {n:4} req  {m}")
+
+    top = sorted(by_chat.items(), key=lambda kv: -kv[1][1])[:6]
+    names = titles([cid for cid, _ in top])
+    print("  top chats:")
+    for cid, (n, d, m) in top:
+        print(f"    ${d:9,.2f}  {n:4} req  {names[cid][:55]:55}  {m}")
+
+    print("  biggest requests (one agent turn each):")
+    for e in sorted(events, key=dollars, reverse=True)[:3]:
+        t = tokens(e)
+        when = datetime.fromtimestamp(int(e.get("timestamp") or 0) / 1000).strftime("%a %H:%M")
+        print(f"    ${dollars(e):7.2f}  {when}  cache {t['cacheReadTokens'] / 1e6:5.1f}M  "
+              f"out {t['outputTokens'] / 1e3:5.0f}k  {e.get('model')}")
+
+
+def main(argv):
+    budget = None
+    if "--budget" in argv:
+        i = argv.index("--budget")
+        budget = float(argv[i + 1])
+        argv = argv[:i] + argv[i + 2:]
+    mode = argv[0] if argv else "summary"
+
+    token = access_token()
+    team, user, period_start, _ = identity()
+    if not token or not team or not user:
+        print("cursor-spend: not signed in to Cursor, or no usage snapshot yet. Open the editor's usage panel once.")
+        return 1
+
+    month_start, now_ms = window_bounds("month", period_start)
+    try:
+        events = fetch(token, team, user, month_start, now_ms)
+    except urllib.error.HTTPError as err:
+        print(f"cursor-spend: dashboard returned HTTP {err.code}. Reopen Cursor to refresh the session.")
+        return 1
+
+    def within(name):
+        start, _ = window_bounds(name, period_start)
+        return [e for e in events if int(e.get("timestamp") or 0) >= start]
+
+    if mode in ("today", "week", "month"):
+        detail(mode.capitalize(), within(mode))
+    else:
+        for name in ("today", "week", "month"):
+            total, toks, fast = summarize(within(name))
+            print(f"{name:6} ${total:9,.2f}   Fast ${fast:8,.2f}   cache {toks['cacheReadTokens'] / 1e6:7.1f}M")
+
+    if budget is not None:
+        today_total = summarize(within("today"))[0]
+        if today_total > budget:
+            print(f"\nOver budget: ${today_total:,.2f} today vs ${budget:,.2f}")
+            return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
