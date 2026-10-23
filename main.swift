@@ -130,19 +130,32 @@ final class Store: ObservableObject {
         }
     }
 
-    /// At most one notification per day once today's total passes the budget.
+    /// Fraction of the daily budget that triggers each alert; each fires at most once per day.
+    static let alertLevels: [Double] = [0.8, 1.0]
+
+    /// Sends the highest level crossed today that has not been sent yet, and marks lower levels as sent.
     private static func alertIfOverBudget(_ usage: Usage) {
-        let total = usage.total(.today)
+        let ratio = usage.total(.today) / usage.budget
         let day = Date.now.formatted(.iso8601.year().month().day())
-        guard total > usage.budget, UserDefaults.standard.string(forKey: "lastAlertDay") != day else { return }
-        UserDefaults.standard.set(day, forKey: "lastAlertDay")
+        let crossed = alertLevels.filter { ratio >= $0 }
+        guard let level = crossed.last, UserDefaults.standard.string(forKey: "lastAlert-\(level)") != day else { return }
+        crossed.forEach { UserDefaults.standard.set(day, forKey: "lastAlert-\($0)") }
+        notify(usage, level: level)
+    }
+
+    static func notify(_ usage: Usage, level: Double) {
+        let total = usage.total(.today)
+        let isOver = level >= 1
+        let title = isOver ? "AI spend over budget" : "Approaching daily AI budget"
+        let subtitle = "Today \(total.dollars) of \(usage.budget.shortDollars) (\(Int((total / usage.budget * 100).rounded()))%)"
         let split = usage.tools.map { "\($0.name) \($0.today.dollars)" }.joined(separator: " · ")
-        let script = "display notification \"\(split)\" with title \"AI spend over budget\" "
-            + "subtitle \"Today \(total.dollars) (budget \(usage.budget.shortDollars))\" sound name \"Funk\""
+        let script = "display notification \"\(split)\" with title \"\(title)\" subtitle \"\(subtitle)\" "
+            + "sound name \"\(isOver ? "Funk" : "Tink")\""
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]
         try? process.run()
+        process.waitUntilExit()
     }
 
     nonisolated private static func run(_ path: String) throws -> Data {
@@ -585,9 +598,9 @@ struct MenuLabel: View {
     @ObservedObject var store: Store
     var body: some View {
         let total = store.usage?.total(.today) ?? 0
-        let isOver = total > (store.usage?.budget ?? .infinity)
+        let ratio = total / (store.usage?.budget ?? .infinity)
         HStack(spacing: 3) {
-            Image(systemName: isOver ? "flame.fill" : "sparkles")
+            Image(systemName: ratio >= 1 ? "flame.fill" : ratio >= Store.alertLevels[0] ? "exclamationmark.triangle.fill" : "sparkles")
             Text(store.usage == nil ? "–" : total.shortDollars).monospacedDigit()
         }
     }
@@ -598,6 +611,11 @@ struct AIUsageApp: App {
     @StateObject private var store = Store()
 
     init() {
+        // `AIUsage --test-alert` sends both alert levels with the cached numbers and exits.
+        if CommandLine.arguments.contains("--test-alert"), let usage = Store(cachedOnly: true).usage {
+            Store.alertLevels.forEach { Store.notify(usage, level: $0) }
+            exit(0)
+        }
         // `AIUsage --snapshot out.png [Today|Week|Month]` renders the popover from the cached JSON and exits.
         guard let flag = CommandLine.arguments.firstIndex(of: "--snapshot") else { return }
         let window = Window(rawValue: CommandLine.arguments.dropFirst(flag + 2).first ?? "") ?? .today

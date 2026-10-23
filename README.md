@@ -23,3 +23,9 @@ Claude Code and OpenCode come from local logs via `ccusage`. Each Mac shows only
 
 Edit in this repo. Scripts in `~/.local/bin` are symlinks here, so collector changes apply on the next refresh.
 After changing `main.swift`, run `./build.sh`. After `git pull` on another Mac, run `./install.sh` once.
+
+## Alerts
+
+Notifications at 80% and 100% of the daily budget, each at most once per day (checked every 10 min).
+Test them with the cached numbers: `~/Applications/AI\ Usage.app/Contents/MacOS/AIUsage --test-alert`.
+Notifications come from Script Editor (System Settings → Notifications → Script Editor).
