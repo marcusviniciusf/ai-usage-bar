@@ -136,6 +136,7 @@ for line in sys.stdin:
                 self.assertEqual(data["mode"], "quota")
                 self.assertEqual(len(data["quotas"]), 2)
                 self.assertEqual(data["quotas"][0]["resetsAt"], 2000000000)
+                self.assertEqual(data["quotas"][0]["windowMins"], 300)
                 self.assertNotEqual(data["quotas"][0]["id"], data["quotas"][1]["id"])
 
     def test_source_failure_stays_visible(self):

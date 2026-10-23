@@ -325,7 +325,8 @@ def codex():
                 minutes = window.get("windowDurationMins")
                 label = "Semanal" if minutes == 10080 else (f"{minutes // 60} horas" if minutes and minutes % 60 == 0 else f"{minutes} min" if minutes else key)
                 quotas.append({"id": f"{bucket_id}-{key}", "label": label if len(buckets) == 1 else f"{bucket.get('limitName') or bucket_id} · {label}",
-                               "usedPercent": window["usedPercent"], "resetsAt": window.get("resetsAt")})
+                               "usedPercent": window["usedPercent"], "resetsAt": window.get("resetsAt"),
+                               "windowMins": minutes})
         if not quotas:
             raise RuntimeError("Codex did not return subscription quotas for this account")
         return {"today": 0, "week": 0, "month": 0, "monthLabel": "", "daily": [], "models": [],

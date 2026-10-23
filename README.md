@@ -63,3 +63,10 @@ Render the current cached view without changing preferences:
 ```bash
 ~/Applications/AI\ Usage.app/Contents/MacOS/AIUsage --snapshot /tmp/ai-usage.png Today
 ```
+
+## Pace and forecasts
+
+- **Cost:** with a global budget set, the Hoje/Semana/Mês picker scales it by the days elapsed (daily budget × days, weeks start Monday) and shows the % used. On Hoje it also shows the combined $/h (Cursor last hour, Claude active 5h block) and how long until the limit at that pace.
+- **Quota:** each Codex window projects linearly from usage so far, either "esgota em ~Xh, antes de renovar" or the expected % at renewal. Needs a used window of at least 10 minutes.
+- The 80% notifications (global budget and quotas) include the same ETA.
+

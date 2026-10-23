@@ -158,6 +158,21 @@ struct Tool: Codable, Identifiable {
         let label: String
         let usedPercent: Double
         let resetsAt: Double?
+        let windowMins: Double?
+
+        /// Linear projection of the usage so far over the rest of the window.
+        var forecast: (text: String, isUrgent: Bool)? {
+            guard let reset = resetsAt, let mins = windowMins, mins > 0, usedPercent > 0, usedPercent < 100 else { return nil }
+            let remaining = reset - Date.now.timeIntervalSince1970
+            let elapsed = mins * 60 - remaining
+            guard remaining > 0, elapsed >= 600 else { return nil }
+            let perSecond = usedPercent / elapsed
+            let projected = usedPercent + perSecond * remaining
+            if projected >= 100 {
+                return ("No ritmo atual esgota em ~\(duration(hours: (100 - usedPercent) / perSecond / 3600)), antes de renovar", true)
+            }
+            return ("No ritmo atual chega a ~\(Int(projected.rounded()))% ao renovar", false)
+        }
     }
 
     struct Chat: Codable, Identifiable { let name: String; let cost: Double; let model: String; var id: String { name + model } }
@@ -285,8 +300,11 @@ final class Store: ObservableObject {
                 let key = "alert-global-\(day)-\(budget.amount)"
                 if UserDefaults.standard.double(forKey: key) < level {
                     UserDefaults.standard.set(level, forKey: key)
-                    notify(title: "Orçamento global · \(level >= 1 ? "Limite atingido" : "Próximo do limite")",
-                           body: "Hoje: \(usage.total(.today).dollars) de \(budget.amount.dollars)", id: key)
+                    var body = "Hoje: \(usage.total(.today).dollars) de \(budget.amount.dollars)"
+                    if level < 1, usage.rate > 0.5 {
+                        body += "\nNo ritmo de \(usage.rate.dollars)/h, limite em ~\(duration(hours: (budget.amount - usage.total(.today)) / usage.rate))"
+                    }
+                    notify(title: "Orçamento global · \(level >= 1 ? "Limite atingido" : "Próximo do limite")", body: body, id: key)
                 }
             }
         }
@@ -303,13 +321,15 @@ final class Store: ObservableObject {
                 checks.append(("\(quota.id)-\(quota.resetsAt ?? 0)", quota.usedPercent / 100,
                                "\(quota.label): \(Int(quota.usedPercent))% utilizado"))
             }
+            let forecasts = Dictionary(uniqueKeysWithValues: (tool.quotas ?? []).map { ("\($0.id)-\($0.resetsAt ?? 0)", $0.forecast?.text) })
             for (period, ratio, detail) in checks {
                 guard let level = alertLevels.last(where: { ratio >= $0 }) else { continue }
                 let key = "alert-\(tool.id)-\(period)"
                 guard UserDefaults.standard.double(forKey: key) < level else { continue }
                 UserDefaults.standard.set(level, forKey: key)
+                let forecast = level < 1 ? forecasts[period].flatMap { $0 } : nil
                 notify(title: "\(tool.name) · \(level >= 1 ? "Limite atingido" : "Próximo do limite")",
-                       body: detail, id: key)
+                       body: forecast.map { "\(detail)\n\($0)" } ?? detail, id: key)
             }
         }
     }
@@ -516,6 +536,7 @@ struct ContentView: View {
         VStack(spacing: 10) {
             header
             if let usage = store.usage {
+                if !usage.costTools.isEmpty { windowPicker(usage) }
                 if let budget = usage.globalBudget { globalBudgetCard(usage, budget: budget) }
                 tools(usage)
                 if !usage.costTools.isEmpty {
@@ -603,21 +624,60 @@ struct ContentView: View {
         store.setPreference(arguments: args) { failure in if let failure { store.failure = failure } }
     }
 
+    private func windowPicker(_ usage: Usage) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(usage.costTools.count == 1 ? "Custos do \(usage.costTools[0].name)" : "Custos das ferramentas")
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
+            SegmentedPill(selection: $window)
+        }.padding(.vertical, 2)
+    }
+
+    /// The daily budget scales with the days elapsed in the selected window (weeks start Monday).
     private func globalBudgetCard(_ usage: Usage, budget: Tool.Budget) -> some View {
-        Card(padding: 14) {
+        let total = usage.total(window)
+        let days = window.days
+        let allowed = budget.amount * Double(days.elapsed)
+        let ratio = total / allowed
+        let title = window == .today ? "Orçamento global diário" : window == .week ? "Orçamento global · semana" : "Orçamento global · mês"
+        return Card(padding: 14) {
             HStack {
-                Text("Orçamento global diário").font(.system(size: 12, weight: .semibold))
+                Text(title).font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Button { editingGlobalBudget = true } label: { Image(systemName: "slider.horizontal.3") }
                     .buttonStyle(.plain).help("Editar orçamento global")
             }
-            Text("\(usage.total(.today).dollars) de \(budget.amount.dollars) hoje")
-                .font(.system(size: 13)).monospacedDigit()
+            HStack {
+                Text("\(total.dollars) de \(allowed.dollars)\(window == .today ? " hoje" : "")")
+                    .font(.system(size: 13)).monospacedDigit()
+                Spacer()
+                Text("\(Int((ratio * 100).rounded()))%")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(ratio >= 0.8 ? Theme.bad : Theme.good)
+            }
             if usage.hasPartialCosts {
                 Text("Consumo parcial: uma ferramenta está indisponível.").font(.system(size: 11)).foregroundStyle(Theme.bad)
             } else {
-                UsageBar(fraction: usage.total(.today) / budget.amount,
-                         color: usage.total(.today) >= budget.amount * 0.8 ? Theme.bad : Theme.good)
+                UsageBar(fraction: ratio, color: ratio >= 0.8 ? Theme.bad : Theme.good)
+                if ratio > 1 {
+                    Text("\((total - allowed).dollars) acima do previsto").font(.system(size: 10.5)).foregroundStyle(Theme.bad)
+                }
+            }
+            if window == .today, usage.rate > 0.5, !usage.hasPartialCosts {
+                let left = allowed - total
+                Label(left > 0 ? "\(usage.rate.dollars)/h agora · limite em ~\(duration(hours: left / usage.rate))"
+                               : "Gastando \(usage.rate.dollars)/h agora",
+                      systemImage: "speedometer")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(left > 0 && left / usage.rate < 1 ? Theme.bad : Theme.secondary)
+            }
+            if window != .today {
+                Text("\(days.elapsed) de \(days.total) dias × \(budget.amount.shortDollars) · média \((total / Double(days.elapsed)).shortDollars)/dia · "
+                     + "\(window == .week ? "semana" : "mês") cheio \((budget.amount * Double(days.total)).shortDollars)")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+            }
+            if window == .month {
+                Text("O mês do Cursor segue o período de cobrança, não o calendário.")
+                    .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
             }
             Text("Soma dos custos locais; cotas de assinatura ficam separadas.")
                 .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
@@ -627,13 +687,6 @@ struct ContentView: View {
     private func tools(_ usage: Usage) -> some View {
         VStack(spacing: 10) {
             ForEach(usage.tools) { tool in
-                if tool.id == usage.costTools.first?.id {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(usage.costTools.count == 1 ? "Custos do \(tool.name)" : "Custos das ferramentas")
-                            .font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
-                        SegmentedPill(selection: $window)
-                    }.padding(.vertical, 2)
-                }
                 Card(padding: 14) {
                     HStack(spacing: 10) {
                         ToolAppIcon(toolId: tool.id, fallback: tool.symbol, size: 24)
@@ -690,6 +743,11 @@ struct ContentView: View {
                 let date = Date(timeIntervalSince1970: reset)
                 Text("Renova \(date, format: .relative(presentation: .named)) · \(date, format: .dateTime.weekday().hour().minute())")
                     .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+            }
+            if let forecast = quota.forecast {
+                Label(forecast.text, systemImage: forecast.isUrgent ? "exclamationmark.triangle.fill" : "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(forecast.isUrgent ? Theme.bad : Theme.secondary)
             }
         }.padding(.top, 3)
     }
