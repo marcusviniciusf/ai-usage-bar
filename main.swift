@@ -17,10 +17,10 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
 
 struct Usage: Codable {
     let updatedAt: Date
-    let tools: [Tool]
+    var tools: [Tool]
     let budget: Double?
-    let globalBudget: Tool.Budget?
-    let indicator: IndicatorConfig?
+    var globalBudget: Tool.Budget?
+    var indicator: IndicatorConfig?
 
     struct IndicatorConfig: Codable { let mode: String; let toolId: String? }
     struct IndicatorPart { let symbol: String; let text: String; var toolId: String? = nil }
@@ -147,9 +147,9 @@ struct Tool: Codable, Identifiable {
     let periodEnd: String?
     let rate: Double?
     let chats: [Chat]?
-    let alertsEnabled: Bool?
+    var alertsEnabled: Bool?
     let mode: String?
-    let budget: Budget?
+    var budget: Budget?
     let quotas: [Quota]?
 
     struct Budget: Codable { let amount: Double; let period: String }
@@ -345,11 +345,34 @@ final class Store: ObservableObject {
         }
     }
 
+    // Preference changes show up immediately; the collector only persists them (and a failure forces a refresh).
+    func setIndicator(mode: String, toolId: String? = nil) {
+        usage?.indicator = Usage.IndicatorConfig(mode: mode, toolId: toolId)
+        setPreference(arguments: ["--set-indicator", mode] + (toolId.map { [$0] } ?? []), refresh: false) { failure in
+            if let failure { self.failure = failure; self.refresh() }
+        }
+    }
+
+    func setAlerts(tool: Tool, enabled: Bool) {
+        if let index = usage?.tools.firstIndex(where: { $0.id == tool.id }) { usage?.tools[index].alertsEnabled = enabled }
+        setPreference(arguments: ["--set-alerts", tool.id, enabled ? "on" : "off"], refresh: false) { failure in
+            if let failure { self.failure = failure; self.refresh() }
+        }
+    }
+
     func setBudget(tool: Tool, period: String, amount: Double, completion: @escaping (String?) -> Void) {
+        if let index = usage?.tools.firstIndex(where: { $0.id == tool.id }) {
+            usage?.tools[index].budget = amount > 0 ? Tool.Budget(amount: amount, period: period) : nil
+        }
         setPreference(arguments: ["--set-tool-budget", tool.id, period, String(amount)], completion: completion)
     }
 
-    func setPreference(arguments: [String], completion: @escaping (String?) -> Void) {
+    func setGlobalBudget(_ amount: Double, completion: @escaping (String?) -> Void) {
+        usage?.globalBudget = amount > 0 ? Tool.Budget(amount: amount, period: "daily") : nil
+        setPreference(arguments: ["--set-budget", String(amount)], completion: completion)
+    }
+
+    func setPreference(arguments: [String], refresh: Bool = true, completion: @escaping (String?) -> Void) {
         let collector = collector
         Task.detached {
             let process = Process()
@@ -365,7 +388,7 @@ final class Store: ObservableObject {
             } catch { failure = error.localizedDescription }
             await MainActor.run {
                 completion(failure)
-                if failure == nil { self.refresh() }
+                if failure == nil && refresh { self.refresh() }
             }
         }
     }
@@ -421,9 +444,10 @@ private let dayParser: DateFormatter = {
 
 struct Card<Content: View>: View {
     var padding: CGFloat = 14
+    var spacing: CGFloat = 10
     @ViewBuilder var content: Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) { content }
+        VStack(alignment: .leading, spacing: spacing) { content }
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -480,6 +504,7 @@ struct UsageBar: View {
 
 struct Sparkline: View {
     let tool: Tool
+    var width: CGFloat = 54
     var body: some View {
         Chart(tool.daily, id: \.date) { day in
             AreaMark(x: .value("Day", day.date), y: .value("Cost", day.cost))
@@ -493,7 +518,7 @@ struct Sparkline: View {
         }
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
-        .frame(width: 54, height: 22)
+        .frame(width: width, height: 22)
     }
 }
 
@@ -525,34 +550,32 @@ struct ContentView: View {
     @State private var window: Window = .today
     @State private var expanded: String?
     @State private var editingTool: Tool?
-    @State private var configuringTool: String?
-    @State private var showingSettings = false
     @State private var editingGlobalBudget = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @AppStorage("chartExpanded") private var chartExpanded = false
 
-    init(window: Window = .today) { _window = State(initialValue: window) }
+    init(window: Window = .today, expanded: String? = nil) {
+        _window = State(initialValue: window)
+        _expanded = State(initialValue: expanded)
+    }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             header
             if let usage = store.usage {
-                if !usage.costTools.isEmpty { windowPicker(usage) }
-                if let budget = usage.globalBudget { globalBudgetCard(usage, budget: budget) }
+                if !usage.costTools.isEmpty { hero(usage) }
                 tools(usage)
-                if !usage.costTools.isEmpty {
-                    chart(usage)
-                }
+                if !usage.costTools.isEmpty { chart(usage) }
                 if usage.tools.isEmpty {
                     Text("Nenhuma ferramenta detectada. Abra o Codex, OpenCode, Claude Code ou Cursor para começar.")
                         .font(.system(size: 12)).foregroundStyle(Theme.secondary).padding(.vertical, 24)
                 }
             } else {
-                ProgressView().controlSize(.small).tint(.white).frame(height: 160)
+                ProgressView().controlSize(.small).tint(.white).frame(height: 120)
             }
-            footer
         }
-        .padding(14)
-        .frame(width: 372)
+        .padding(12)
+        .frame(width: 340)
         .background(Theme.background)
         .environment(\.colorScheme, .dark)
         .environment(\.locale, Locale(identifier: "pt_BR"))
@@ -560,17 +583,19 @@ struct ContentView: View {
         .sheet(isPresented: $editingGlobalBudget) { BudgetEditor(globalBudget: store.usage?.globalBudget).environmentObject(store) }
     }
 
+    // MARK: Header
+
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Image(systemName: "sparkles")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
+                .frame(width: 24, height: 24)
                 .background(LinearGradient(colors: [Color(hex: 0x7C8CFF), Color(hex: 0xFF9A6B)],
                                            startPoint: .topLeading, endPoint: .bottomTrailing),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            VStack(alignment: .leading, spacing: 1) {
-                Text("AI Usage").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.primary)
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            VStack(alignment: .leading, spacing: 0) {
+                Text("AI Usage").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.primary)
                 Group {
                     if let failure = store.failure {
                         Text(failure).foregroundStyle(Theme.bad)
@@ -580,18 +605,14 @@ struct ContentView: View {
                         Text("Atualizado \(updated, format: .relative(presentation: .named))")
                     }
                 }
-                .font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                .font(.system(size: 10.5)).foregroundStyle(Theme.secondary).lineLimit(1)
             }
             Spacer()
-            Button { showingSettings = true } label: {
-                Image(systemName: "gearshape").foregroundStyle(Theme.secondary).frame(width: 24, height: 28)
-            }.buttonStyle(.plain).help("Configurações do app")
-            .popover(isPresented: $showingSettings) { appSettings }
             Button(action: store.refresh) {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.secondary)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 24, height: 24)
                     .background(Circle().fill(Color.white.opacity(0.06)))
                     .rotationEffect(.degrees(store.isLoading ? 360 : 0))
                     .animation(store.isLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default,
@@ -599,145 +620,221 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help("Atualizar consumo")
+            settingsMenu
         }
     }
 
-    private var appSettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Indicador da barra").font(.headline)
-            Button("Resumo combinado") { setIndicator("summary") }
-            Button("Mais próximo do limite") { setIndicator("urgent") }
-            Text("Fixar uma ferramenta").font(.system(size: 11)).foregroundStyle(.secondary)
-            ForEach(store.usage?.tools ?? []) { tool in
-                Button(tool.name) { setIndicator("fixed", tool: tool.id) }
+    private var settingsMenu: some View {
+        let mode = store.usage?.indicator?.mode ?? "summary"
+        let fixedId = store.usage?.indicator?.toolId
+        return Menu {
+            Section("Indicador da barra") {
+                Toggle("Resumo combinado", isOn: Binding(get: { mode == "summary" }, set: { _ in store.setIndicator(mode: "summary") }))
+                Toggle("Mais próximo do limite", isOn: Binding(get: { mode == "urgent" }, set: { _ in store.setIndicator(mode: "urgent") }))
+                Menu("Fixar uma ferramenta") {
+                    ForEach(store.usage?.tools ?? []) { tool in
+                        Toggle(tool.name, isOn: Binding(get: { mode == "fixed" && fixedId == tool.id },
+                                                        set: { _ in store.setIndicator(mode: "fixed", toolId: tool.id) }))
+                    }
+                }
             }
             Divider()
-            Button("Orçamento global diário…") { showingSettings = false; editingGlobalBudget = true }
-            Text("Configurações somente deste Mac.").font(.system(size: 11)).foregroundStyle(.secondary)
-        }.padding(16)
+            Button("Orçamento global diário…") { editingGlobalBudget = true }
+            Toggle("Iniciar com o Mac", isOn: Binding(get: { launchAtLogin }, set: { _ in toggleLaunchAtLogin() }))
+            Divider()
+            Button("Sair") { NSApp.terminate(nil) }
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.white.opacity(0.06)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Configurações do app")
     }
 
-    private func setIndicator(_ mode: String, tool: String? = nil) {
-        showingSettings = false
-        var args = ["--set-indicator", mode]
-        if let tool { args.append(tool) }
-        store.setPreference(arguments: args) { failure in if let failure { store.failure = failure } }
+    private func toggleLaunchAtLogin() {
+        try? launchAtLogin ? SMAppService.mainApp.unregister() : SMAppService.mainApp.register()
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
-    private func windowPicker(_ usage: Usage) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(usage.costTools.count == 1 ? "Custos do \(usage.costTools[0].name)" : "Custos das ferramentas")
-                .font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
-            SegmentedPill(selection: $window)
-        }.padding(.vertical, 2)
-    }
+    // MARK: Hero
 
     /// The daily budget scales with the days elapsed in the selected window (weeks start Monday).
-    private func globalBudgetCard(_ usage: Usage, budget: Tool.Budget) -> some View {
+    private func hero(_ usage: Usage) -> some View {
         let total = usage.total(window)
         let days = window.days
-        let allowed = budget.amount * Double(days.elapsed)
-        let ratio = total / allowed
-        let title = window == .today ? "Orçamento global diário" : window == .week ? "Orçamento global · semana" : "Orçamento global · mês"
-        return Card(padding: 14) {
-            HStack {
-                Text(title).font(.system(size: 12, weight: .semibold))
+        let allowed = (usage.globalBudget?.amount ?? 0) * Double(days.elapsed)
+        let ratio = allowed > 0 ? total / allowed : 0
+        let isWarm = allowed > 0 && ratio >= 0.8
+        let left = allowed - total
+        let showsPace = window == .today && usage.rate > 0.5 && !usage.hasPartialCosts
+        return Card(padding: 12, spacing: 7) {
+            SegmentedPill(selection: $window)
+            HStack(alignment: .firstTextBaseline) {
+                Text(total.dollars)
+                    .font(.system(size: 28, weight: .bold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(ratio >= 1 ? Theme.bad : Theme.primary)
+                    .contentTransition(.numericText(value: total))
+                    .animation(.snappy, value: total)
                 Spacer()
-                Button { editingGlobalBudget = true } label: { Image(systemName: "slider.horizontal.3") }
-                    .buttonStyle(.plain).help("Editar orçamento global")
-            }
-            HStack {
-                Text("\(total.dollars) de \(allowed.dollars)\(window == .today ? " hoje" : "")")
-                    .font(.system(size: 13)).monospacedDigit()
-                Spacer()
-                Text("\(Int((ratio * 100).rounded()))%")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(ratio >= 0.8 ? Theme.bad : Theme.good)
-            }
-            if usage.hasPartialCosts {
-                Text("Consumo parcial: uma ferramenta está indisponível.").font(.system(size: 11)).foregroundStyle(Theme.bad)
-            } else {
-                UsageBar(fraction: ratio, color: ratio >= 0.8 ? Theme.bad : Theme.good)
-                if ratio > 1 {
-                    Text("\((total - allowed).dollars) acima do previsto").font(.system(size: 10.5)).foregroundStyle(Theme.bad)
+                if allowed > 0 {
+                    Text("\(Int((ratio * 100).rounded()))%")
+                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(isWarm ? Theme.bad : Theme.good)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill((isWarm ? Theme.bad : Theme.good).opacity(0.14)))
                 }
             }
-            if window == .today, usage.rate > 0.5, !usage.hasPartialCosts {
-                let left = allowed - total
-                Label(left > 0 ? "\(usage.rate.dollars)/h agora · limite em ~\(duration(hours: left / usage.rate))"
-                               : "Gastando \(usage.rate.dollars)/h agora",
-                      systemImage: "speedometer")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(left > 0 && left / usage.rate < 1 ? Theme.bad : Theme.secondary)
+            if usage.hasPartialCosts {
+                Text("Consumo parcial: uma ferramenta está indisponível.").font(.system(size: 10.5)).foregroundStyle(Theme.bad)
+            } else if allowed > 0 {
+                UsageBar(fraction: ratio, color: isWarm ? Theme.bad : Theme.good)
+                HStack {
+                    Text(left < 0 ? "\((-left).dollars) acima de \(allowed.shortDollars)" : "\(left.dollars) restam de \(allowed.shortDollars)")
+                        .foregroundStyle(left < 0 ? Theme.bad : Theme.secondary)
+                    Spacer()
+                    if showsPace {
+                        Label("\(usage.rate.shortDollars)/h", systemImage: "speedometer")
+                    }
+                }.font(.system(size: 10.5, weight: .medium))
+                if showsPace, left > 0 {
+                    Text("No ritmo atual, limite em ~\(duration(hours: left / usage.rate))")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(left / usage.rate < 1 ? Theme.bad : Theme.secondary)
+                }
+                if window != .today {
+                    Text("\(days.elapsed)/\(days.total) dias × \((usage.globalBudget?.amount ?? 0).shortDollars) · média \((total / Double(days.elapsed)).shortDollars)/dia · cheio \(((usage.globalBudget?.amount ?? 0) * Double(days.total)).shortDollars)")
+                        .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
+                }
+            } else if showsPace {
+                Label("\(usage.rate.dollars)/h agora", systemImage: "speedometer")
+                    .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.secondary)
             }
-            if window != .today {
-                Text("\(days.elapsed) de \(days.total) dias × \(budget.amount.shortDollars) · média \((total / Double(days.elapsed)).shortDollars)/dia · "
-                     + "\(window == .week ? "semana" : "mês") cheio \((budget.amount * Double(days.total)).shortDollars)")
-                    .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+        }
+        .help("Soma dos custos locais. Cotas de assinatura ficam separadas. O mês do Cursor segue o período de cobrança.")
+    }
+
+    // MARK: Tools
+
+    private func tools(_ usage: Usage) -> some View {
+        Card(padding: 4, spacing: 0) {
+            ForEach(usage.tools) { tool in
+                toolRow(tool)
+                if tool.id != usage.tools.last?.id { Divider().overlay(Theme.stroke).padding(.horizontal, 8) }
             }
-            if window == .month {
-                Text("O mês do Cursor segue o período de cobrança, não o calendário.")
-                    .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-            }
-            Text("Soma dos custos locais; cotas de assinatura ficam separadas.")
-                .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
         }
     }
 
-    private func tools(_ usage: Usage) -> some View {
-        VStack(spacing: 10) {
-            ForEach(usage.tools) { tool in
-                Card(padding: 14) {
-                    HStack(spacing: 10) {
-                        ToolAppIcon(toolId: tool.id, fallback: tool.symbol, size: 24)
-                            .foregroundStyle(tool.color)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(tool.name).font(.system(size: 14, weight: .semibold))
-                            Text(tool.mode == "quota" ? "Assinatura · conta inteira" : tool.id == "opencode" ? "Modelos não gratuitos · estimativa USD" : "Consumo local · estimativa em USD")
-                                .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
-                        }
-                        Spacer()
-                        Button { configuringTool = tool.id } label: {
-                            Image(systemName: "slider.horizontal.3").foregroundStyle(Theme.secondary)
-                                .frame(width: 26, height: 26).contentShape(Rectangle())
-                        }.buttonStyle(.plain).help("Configurar \(tool.name)")
-                        .popover(isPresented: Binding(get: { configuringTool == tool.id }, set: { if !$0 { configuringTool = nil } })) {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text(tool.name).font(.headline)
-                                if tool.mode != "quota" {
-                                    Button("Configurar orçamento…") { configuringTool = nil; editingTool = tool }
-                                }
-                                Button(tool.alertsEnabled == false ? "Ativar alertas" : "Desativar alertas") {
-                                    configuringTool = nil
-                                    store.setPreference(arguments: ["--set-alerts", tool.id, tool.alertsEnabled == false ? "on" : "off"]) { failure in
-                                        if let failure { store.failure = failure }
-                                    }
-                                }
-                            }.padding(16)
-                        }
+    private func toolRow(_ tool: Tool) -> some View {
+        let isExpanded = expanded == tool.id
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { expanded = isExpanded ? nil : tool.id }
+            } label: {
+                HStack(spacing: 10) {
+                    ToolAppIcon(toolId: tool.id, fallback: tool.symbol, size: 24).foregroundStyle(tool.color)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(tool.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.primary)
+                        rowSubtitle(tool)
                     }
-                    if let error = tool.error {
-                        Text(error).font(.system(size: 11)).foregroundStyle(Theme.bad)
-                            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                    } else if tool.mode == "quota" {
-                        ForEach(tool.quotas ?? []) { quota in
-                            quotaRow(quota, tool: tool)
-                        }
-                    } else {
-                        costRow(tool)
-                    }
+                    Spacer(minLength: 4)
+                    rowTrailing(tool)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 8).padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                details(tool)
+                    .padding(.horizontal, 8).padding(.bottom, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowSubtitle(_ tool: Tool) -> some View {
+        if let error = tool.error {
+            Text(error).font(.system(size: 10.5)).foregroundStyle(Theme.bad).lineLimit(1)
+        } else if tool.mode == "quota" {
+            if let urgent = tool.quotas?.compactMap({ $0.forecast }).first(where: { $0.isUrgent }) {
+                Text(urgent.text).font(.system(size: 10.5)).foregroundStyle(Theme.bad).lineLimit(1)
+            } else {
+                Text("Assinatura").font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+            }
+        } else {
+            Text(costSubtitle(tool)).font(.system(size: 10.5)).foregroundStyle(Theme.secondary).lineLimit(1)
+        }
+    }
+
+    private func costSubtitle(_ tool: Tool) -> String {
+        var parts: [String] = []
+        if let budget = tool.budget {
+            let spent = budget.period == "monthly" ? tool.month : tool.today
+            parts.append("\(Int((spent / budget.amount * 100).rounded()))% do orçamento")
+        }
+        if let rate = tool.rate, rate > 0.5 { parts.append("\(rate.shortDollars)/h") }
+        return parts.isEmpty ? (tool.id == "opencode" ? "Modelos pagos" : "Uso local") : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func rowTrailing(_ tool: Tool) -> some View {
+        if tool.error != nil {
+            EmptyView()
+        } else if tool.mode == "quota" {
+            HStack(spacing: 5) {
+                ForEach(tool.quotas ?? []) { quota in
+                    let isHot = quota.usedPercent >= 80
+                    Text("\(shortLabel(quota.label)) \(Int(quota.usedPercent.rounded()))%")
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(isHot ? Theme.bad : Theme.primary)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill((isHot ? Theme.bad : Color.white).opacity(isHot ? 0.14 : 0.08)))
                 }
             }
+        } else {
+            HStack(spacing: 8) {
+                Sparkline(tool: tool, width: 40)
+                Text(tool.amount(window).dollars)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(Theme.primary)
+            }
+        }
+    }
+
+    private func shortLabel(_ label: String) -> String {
+        if label == "Semanal" { return "Sem" }
+        if let hours = label.split(separator: " ").first, label.contains("hora") { return "\(hours)h" }
+        return String(label.prefix(4))
+    }
+
+    @ViewBuilder
+    private func details(_ tool: Tool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if tool.mode == "quota" {
+                ForEach(tool.quotas ?? []) { quota in quotaRow(quota, tool: tool) }
+            } else if tool.error == nil {
+                costDetails(tool)
+            }
+            toolMenu(tool)
         }
     }
 
     private func quotaRow(_ quota: Tool.Quota, tool: Tool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(quota.label).foregroundStyle(Theme.secondary)
                 Spacer()
                 Text("\(Int(quota.usedPercent.rounded()))% usado").fontWeight(.semibold).monospacedDigit()
-            }.font(.system(size: 12))
+            }.font(.system(size: 11.5))
             UsageBar(fraction: quota.usedPercent / 100, color: quota.usedPercent >= 80 ? Theme.bad : tool.color)
             if let reset = quota.resetsAt {
                 let date = Date(timeIntervalSince1970: reset)
@@ -749,122 +846,128 @@ struct ContentView: View {
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(forecast.isUrgent ? Theme.bad : Theme.secondary)
             }
-        }.padding(.top, 3)
+        }
     }
 
-    private func costRow(_ tool: Tool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(tool.amount(window).dollars).font(.system(size: 26, weight: .semibold)).monospacedDigit()
-                Text(window == .today ? "hoje" : window == .week ? "nesta semana" : "neste mês")
-                    .font(.system(size: 11)).foregroundStyle(Theme.secondary)
-                Spacer()
-                Sparkline(tool: tool)
+    @ViewBuilder
+    private func costDetails(_ tool: Tool) -> some View {
+        if let budget = tool.budget {
+            let spent = budget.period == "monthly" ? tool.month : tool.today
+            VStack(alignment: .leading, spacing: 4) {
+                UsageBar(fraction: spent / budget.amount, color: spent >= budget.amount * 0.8 ? Theme.bad : tool.color)
+                Text("\(spent.dollars) de \(budget.amount.dollars) · \(budget.period == "monthly" ? "mensal" : "diário")")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
             }
-            if let budget = tool.budget {
-                let amount = budget.period == "monthly" ? tool.month : tool.today
-                UsageBar(fraction: amount / budget.amount, color: amount >= budget.amount * 0.8 ? Theme.bad : tool.color)
+        }
+        if tool.id == "cursor", let limit = tool.limit, limit > 0 {
+            VStack(alignment: .leading, spacing: 4) {
+                UsageBar(fraction: tool.month / limit, color: tool.color)
+                Text("Plano \(tool.month.shortDollars) de \(limit.shortDollars)\(tool.periodEnd.map { " · renova \($0)" } ?? "")")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+            }
+        }
+        VStack(alignment: .leading, spacing: 3) {
+            sectionLabel("Modelos hoje")
+            ForEach(tool.models) { model in
                 HStack {
-                    Text("\(amount.dollars) de \(budget.amount.dollars) · \(budget.period == "monthly" ? "mensal" : "diário")")
+                    Text(model.name).lineLimit(1).truncationMode(.middle)
                     Spacer()
-                    Text("\(Int((amount / budget.amount * 100).rounded()))%")
-                }.font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
-            } else {
-                Button("Definir orçamento opcional") { editingTool = tool }
-                    .font(.system(size: 11)).buttonStyle(.plain).foregroundStyle(Theme.secondary)
+                    Text(model.cost.dollars).monospacedDigit()
+                }.font(.system(size: 11)).foregroundStyle(Theme.primary.opacity(0.8))
             }
-            if tool.id == "cursor", let limit = tool.limit, limit > 0 {
-                Text("Plano: \(tool.month.dollars) de \(limit.dollars)").font(.system(size: 11)).foregroundStyle(Theme.secondary)
-                if let end = tool.periodEnd { Text("Renova em \(end)").font(.system(size: 10.5)).foregroundStyle(Theme.secondary) }
-            }
-            Button {
-                withAnimation { expanded = expanded == tool.id ? nil : tool.id }
-            } label: {
-                Label(expanded == tool.id ? "Ocultar detalhes" : "Modelos e sessões de hoje",
-                      systemImage: expanded == tool.id ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11)).foregroundStyle(Theme.secondary)
-            }.buttonStyle(.plain)
-            if expanded == tool.id {
-                ForEach(tool.models) { model in
+            if tool.models.isEmpty { Text("Sem consumo hoje").font(.system(size: 11)).foregroundStyle(Theme.tertiary) }
+        }
+        if let chats = tool.chats, !chats.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                sectionLabel("Sessões mais caras")
+                ForEach(chats) { chat in
                     HStack {
-                        Text(model.name).lineLimit(1)
+                        Text(chat.name).lineLimit(1).truncationMode(.tail)
                         Spacer()
-                        Text(model.cost.dollars).monospacedDigit()
-                    }.font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                        Text(chat.cost.dollars).monospacedDigit()
+                    }.font(.system(size: 11)).foregroundStyle(Theme.primary.opacity(0.8))
                 }
-                if tool.models.isEmpty { Text("Sem consumo hoje").font(.system(size: 11)).foregroundStyle(Theme.secondary) }
-                if let chats = tool.chats, !chats.isEmpty {
-                    Text("Sessões · custo total, pode incluir outros dias")
-                        .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                    ForEach(chats) { chat in
-                        HStack {
-                            Text(chat.name).lineLimit(1)
-                            Spacer()
-                            Text(chat.cost.dollars).monospacedDigit()
-                        }.font(.system(size: 11)).foregroundStyle(Theme.secondary)
-                    }
-                }
-                if tool.id == "cursor" {
-                    Button("Abrir painel do Cursor") {
-                        NSWorkspace.shared.open(URL(string: "https://cursor.com/dashboard?tab=usage")!)
-                    }.font(.system(size: 11))
-                }
+                Text("Custo total da sessão, pode incluir outros dias.").font(.system(size: 9.5)).foregroundStyle(Theme.tertiary)
             }
         }
     }
 
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text.uppercased()).font(.system(size: 9, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.tertiary)
+    }
+
+    private func toolMenu(_ tool: Tool) -> some View {
+        Menu {
+            if tool.mode != "quota" { Button("Configurar orçamento…") { editingTool = tool } }
+            Button(tool.alertsEnabled == false ? "Ativar alertas" : "Desativar alertas") {
+                store.setAlerts(tool: tool, enabled: tool.alertsEnabled == false)
+            }
+            if tool.id == "cursor" {
+                Divider()
+                Button("Abrir painel do Cursor") { NSWorkspace.shared.open(URL(string: "https://cursor.com/dashboard?tab=usage")!) }
+            }
+        } label: {
+            Label(tool.alertsEnabled == false ? "Opções · alertas desligados" : "Opções", systemImage: "ellipsis.circle")
+                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.secondary)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+    }
+
+    // MARK: History
+
     private func chart(_ usage: Usage) -> some View {
-        Card {
-            HStack {
-                Text("Últimos 14 dias · USD").font(.system(size: 9.5, weight: .semibold)).tracking(0.6)
-                    .foregroundStyle(Theme.tertiary)
-                Spacer()
-                HStack(spacing: 10) {
+        Card(padding: 10, spacing: 6) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { chartExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Text("ÚLTIMOS 14 DIAS · USD").font(.system(size: 9.5, weight: .semibold)).tracking(0.6)
+                        .foregroundStyle(Theme.tertiary)
+                    Spacer()
+                    if chartExpanded {
+                        HStack(spacing: 8) {
+                            ForEach(usage.costTools) { tool in
+                                HStack(spacing: 3) {
+                                    Circle().fill(tool.gradient).frame(width: 5, height: 5)
+                                    Text(tool.name.components(separatedBy: " ").first ?? tool.name)
+                                }
+                            }
+                        }.font(.system(size: 9.5)).foregroundStyle(Theme.secondary)
+                    }
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.tertiary)
+                        .rotationEffect(.degrees(chartExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if chartExpanded {
+                Chart {
                     ForEach(usage.costTools) { tool in
-                        HStack(spacing: 4) {
-                            Circle().fill(tool.gradient).frame(width: 6, height: 6)
-                            Text(tool.name.components(separatedBy: " ").first ?? tool.name)
+                        ForEach(tool.daily, id: \.date) { day in
+                            BarMark(x: .value("Day", dayParser.date(from: day.date) ?? .now, unit: .day),
+                                    y: .value("Cost", day.cost), width: .ratio(0.62))
+                                .foregroundStyle(tool.gradient)
+                                .cornerRadius(3)
                         }
                     }
                 }
-                .font(.system(size: 10)).foregroundStyle(Theme.secondary)
-            }
-            Chart {
-                ForEach(usage.costTools) { tool in
-                    ForEach(tool.daily, id: \.date) { day in
-                        BarMark(x: .value("Day", dayParser.date(from: day.date) ?? .now, unit: .day),
-                                y: .value("Cost", day.cost), width: .ratio(0.62))
-                            .foregroundStyle(tool.gradient)
-                            .cornerRadius(3)
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: .day, count: 4)) {
+                        AxisValueLabel(format: .dateTime.day().month(.abbreviated), centered: true)
+                            .foregroundStyle(Theme.tertiary)
                     }
                 }
-            }
-            .chartXAxis {
-                AxisMarks(values: .stride(by: .day, count: 4)) {
-                    AxisValueLabel(format: .dateTime.day().month(.abbreviated), centered: true)
-                        .foregroundStyle(Theme.tertiary)
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
+                        AxisGridLine().foregroundStyle(Color.white.opacity(0.06))
+                        AxisValueLabel { Text((value.as(Double.self) ?? 0).shortDollars) }
+                            .foregroundStyle(Theme.tertiary)
+                    }
                 }
+                .frame(height: 90)
+                .transition(.opacity)
             }
-            .chartYAxis {
-                AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
-                    AxisGridLine().foregroundStyle(Color.white.opacity(0.06))
-                    AxisValueLabel { Text((value.as(Double.self) ?? 0).shortDollars) }
-                        .foregroundStyle(Theme.tertiary)
-                }
-            }
-            .frame(height: 118)
-        }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 6) {
-            FooterButton(title: "Iniciar com o Mac", symbol: launchAtLogin ? "checkmark.circle.fill" : "circle",
-                         isOn: launchAtLogin) {
-                try? launchAtLogin ? SMAppService.mainApp.unregister() : SMAppService.mainApp.register()
-                launchAtLogin = SMAppService.mainApp.status == .enabled
-            }
-            Spacer()
-            FooterButton(title: "Sair", symbol: "power") { NSApp.terminate(nil) }
         }
     }
 }
@@ -924,7 +1027,7 @@ struct BudgetEditor: View {
             if failure == nil { dismiss() }
         }
         if let tool { store.setBudget(tool: tool, period: period, amount: value, completion: completion) }
-        else { store.setPreference(arguments: ["--set-budget", String(value)], completion: completion) }
+        else { store.setGlobalBudget(value, completion: completion) }
     }
 }
 
@@ -1050,10 +1153,11 @@ struct AIUsageApp: App {
         // `AIUsage --snapshot out.png [Today|Week|Month]` renders the popover from the cached JSON and exits.
         guard let flag = CommandLine.arguments.firstIndex(of: "--snapshot") ?? CommandLine.arguments.firstIndex(of: "--snapshot-bar") else { return }
         let window = Window(rawValue: CommandLine.arguments.dropFirst(flag + 2).first ?? "") ?? .today
+        let expanded = CommandLine.arguments.dropFirst(flag + 3).first
         let cached = Store(cachedOnly: true)
         let content = CommandLine.arguments[flag] == "--snapshot-bar"
             ? AnyView(MenuLabel(store: cached).environment(\.colorScheme, .dark).padding(8).background(Color(hex: 0x172C40)).foregroundStyle(.white))
-            : AnyView(ContentView(window: window).environmentObject(cached))
+            : AnyView(ContentView(window: window, expanded: expanded).environmentObject(cached))
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
         if let tiff = renderer.nsImage?.tiffRepresentation,

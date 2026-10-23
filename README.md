@@ -70,3 +70,8 @@ Render the current cached view without changing preferences:
 - **Quota:** each Codex window projects linearly from usage so far, either "esgota em ~Xh, antes de renovar" or the expected % at renewal. Needs a used window of at least 10 minutes.
 - The 80% notifications (global budget and quotas) include the same ETA.
 
+## Panel layout
+
+Compact by default (about 420pt tall): hero, one row per tool, collapsed 14-day chart. Tap a tool row to expand models, sessions, budget and plan details; per-tool options live in its **Opções** menu. App settings (bar indicator, global budget, launch at login, quit) are in the gear menu, a native menu, so they open instantly.
+Preference changes apply immediately in the UI and are persisted in the background. Cursor events are cached in `~/Library/Caches/ai-usage-cursor-events.json`, so only the last day is refetched (refresh about 2s instead of 9s).
+

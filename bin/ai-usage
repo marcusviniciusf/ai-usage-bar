@@ -102,6 +102,35 @@ def cursor_limit(spend, period_start):
     return None
 
 
+CURSOR_CACHE = os.path.join(HOME, "Library/Caches/ai-usage-cursor-events.json")
+DAY_MS = 86_400_000
+
+
+def cursor_events(spend, token, team, user, start_ms):
+    """Events since start_ms. Older days come from a local cache; only the newest day is refetched."""
+    cached = []
+    try:
+        with open(CURSOR_CACHE) as f:
+            blob = json.load(f)
+        if blob["startMs"] <= start_ms and blob["team"] == team and blob["user"] == user:
+            cached = [e for e in blob["events"] if int(e.get("timestamp") or 0) >= start_ms]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    newest = max((int(e.get("timestamp") or 0) for e in cached), default=0)
+    fetch_from = max(start_ms, newest - DAY_MS) if cached else start_ms
+    fresh = spend.fetch(token, team, user, fetch_from, int(time.time() * 1000) + 60_000)
+    events = [e for e in cached if int(e.get("timestamp") or 0) < fetch_from] + fresh
+    try:
+        os.makedirs(os.path.dirname(CURSOR_CACHE), exist_ok=True)
+        tmp = f"{CURSOR_CACHE}.tmp"
+        with open(tmp, "w") as f:
+            json.dump({"startMs": start_ms, "team": team, "user": user, "events": events}, f)
+        os.replace(tmp, CURSOR_CACHE)
+    except OSError:
+        pass
+    return events
+
+
 def cursor():
     spend = SourceFileLoader("cursor_spend", os.path.join(HOME, ".local/bin/cursor-spend")).load_module()
     token = spend.access_token()
@@ -113,7 +142,7 @@ def cursor():
     start = min(datetime.fromtimestamp(period_ms / 1000).date(), history_start, week_start)
     start_ms = int(datetime.combine(start, datetime.min.time()).timestamp() * 1000)
     try:
-        events = spend.fetch(token, team, user, start_ms, int(time.time() * 1000) + 60_000)
+        events = cursor_events(spend, token, team, user, start_ms)
     except spend.urllib.error.HTTPError as err:
         raise RuntimeError(f"Cursor dashboard HTTP {err.code}. Reopen Cursor.")
 
