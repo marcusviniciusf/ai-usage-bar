@@ -14,6 +14,10 @@ chmod +x bin/ai-usage bin/cursor-spend
 ln -sf "$PWD/bin/ai-usage" "$HOME/.local/bin/ai-usage"
 ln -sf "$PWD/bin/cursor-spend" "$HOME/.local/bin/cursor-spend"
 
+if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/ai-usage/config.json" ]; then
+  /usr/bin/python3 "$HOME/.local/bin/ai-usage" --set-budget 60
+fi
+
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v ccusage >/dev/null; then
   if command -v bun >/dev/null; then

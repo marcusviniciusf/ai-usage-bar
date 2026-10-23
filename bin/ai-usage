@@ -16,7 +16,34 @@ from datetime import date, datetime, timedelta, timezone
 from importlib.machinery import SourceFileLoader
 
 HOME = os.path.expanduser("~")
-DAILY_BUDGET = float(os.environ.get("AI_USAGE_DAILY_BUDGET", "60"))
+CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "ai-usage", "config.json")
+DEFAULT_BUDGET = 60.0
+
+
+def daily_budget():
+    """Env AI_USAGE_DAILY_BUDGET wins, then dailyBudget in the config file, then the default."""
+    try:
+        return float(os.environ["AI_USAGE_DAILY_BUDGET"])
+    except (KeyError, ValueError):
+        pass
+    try:
+        with open(CONFIG) as f:
+            return float(json.load(f)["dailyBudget"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return DEFAULT_BUDGET
+
+
+def set_budget(value):
+    os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+    try:
+        with open(CONFIG) as f:
+            config = json.load(f)
+    except (OSError, ValueError):
+        config = {}
+    config["dailyBudget"] = value
+    with open(CONFIG, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
 HISTORY_DAYS = 14
 ENV = {**os.environ, "PATH": f"{HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
 CCUSAGE = shutil.which("ccusage", path=ENV["PATH"]) or "ccusage"
@@ -113,10 +140,54 @@ def burn_rate(agent):
         return 0.0
 
 
+def claude_title(project_path, session_id):
+    path = os.path.join(HOME, ".claude/projects", project_path, f"{session_id}.jsonl")
+    title = prompt = None
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                if '"custom-title"' in line:
+                    title = json.loads(line).get("customTitle") or title
+                elif '"last-prompt"' in line:
+                    prompt = json.loads(line).get("lastPrompt") or prompt
+    except (OSError, ValueError):
+        pass
+    return title or (prompt or "")[:60] or project_path.rsplit("-", 1)[-1]
+
+
+def opencode_titles(ids):
+    import sqlite3
+    try:
+        db = sqlite3.connect(f"file:{os.path.join(HOME, '.local/share/opencode/opencode.db')}?mode=ro", uri=True)
+        marks = ",".join("?" * len(ids))
+        titles = {}
+        for table in ("session", "session_v2"):  # session_v2 is current, session holds older rows
+            titles.update({k: v for k, v in db.execute(f"SELECT id, title FROM {table} WHERE id IN ({marks})", ids) if v})
+        db.close()
+        return titles
+    except sqlite3.Error:
+        return {}
+
+
+def top_chats(agent):
+    """Most expensive sessions active today. A session's cost is its lifetime total, so a multi-day session counts fully."""
+    sessions = ccusage_json(agent, "session", "--since", today.strftime("%Y%m%d")).get("sessions", [])
+    top = sorted((s for s in sessions if s.get("totalCost", 0) > 0), key=lambda s: -s["totalCost"])[:3]
+    titles = opencode_titles([s["sessionId"] for s in top]) if agent == "opencode" and top else {}
+    chats = []
+    for s in top:
+        name = (claude_title(s.get("projectPath", ""), s["sessionId"]) if agent == "claude"
+                else titles.get(s["sessionId"]) or s["sessionId"][:12])
+        chats.append({"name": name, "cost": round(s["totalCost"], 4),
+                      "model": (s.get("modelsUsed") or ["?"])[0].split("/")[-1]})
+    return chats
+
+
 def ccusage(agent):
     since = min(history_start, week_start, month_start).strftime("%Y%m%d")
     with ThreadPoolExecutor() as pool:
         rate = pool.submit(burn_rate, agent)
+        chats = pool.submit(top_chats, agent)
         days = ccusage_json(agent, "daily", "--since", since).get("daily", [])
 
     by_day, by_model = defaultdict(float), defaultdict(float)
@@ -134,6 +205,7 @@ def ccusage(agent):
         "daily": history(by_day),
         "models": top_models(by_model),
         "rate": rate.result(),
+        "chats": chats.result(),
     }
 
 
@@ -153,10 +225,14 @@ def collect(source):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--set-budget":
+        set_budget(float(sys.argv[2]))
+        print(f"dailyBudget = {sys.argv[2]} in {CONFIG}")
+        return 0
     with ThreadPoolExecutor() as pool:
         tools = list(pool.map(collect, SOURCES))
     json.dump({"updatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
-               "budget": DAILY_BUDGET, "tools": tools}, sys.stdout)
+               "budget": daily_budget(), "tools": tools}, sys.stdout)
     return 0
 
 

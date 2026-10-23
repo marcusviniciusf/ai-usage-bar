@@ -13,7 +13,7 @@ The first refresh asks for Keychain access to "Cursor Safe Storage": choose **Al
 
 ## Pieces
 
-- `bin/ai-usage` — collector, prints JSON. Daily budget: `AI_USAGE_DAILY_BUDGET` default in the file.
+- `bin/ai-usage` — collector, prints JSON.
 - `bin/cursor-spend` — Cursor dashboard API using the editor's local session. Also a CLI (`cursor-spend today`).
 - `main.swift` / `build.sh` — SwiftUI app, installed to `~/Applications/AI Usage.app`.
 
@@ -35,3 +35,17 @@ Native notifications from "AI Usage" (System Settings → Notifications → AI U
 Hero shows combined $/h (Cursor last hour, Claude active 5h block) and how long until the daily budget at that pace.
 The 80% notification includes the same ETA. Expanding Cursor lists today's most expensive chats.
 `build.sh` renders the app icon itself (`AIUsage --icon`), no assets to keep.
+
+## Daily budget
+
+Per Mac, default $60. Set it with:
+
+```bash
+ai-usage --set-budget 80
+```
+
+That writes `dailyBudget` to `~/.config/ai-usage/config.json` (edit by hand works too). The env var
+`AI_USAGE_DAILY_BUDGET` overrides the file. Applies on the next refresh (10 min) or after reopening the app.
+
+Top chats today: Cursor from the dashboard, Claude from session titles in `~/.claude/projects`, OpenCode from its DB.
+A session's cost is its lifetime total, so a session spanning several days counts fully.
