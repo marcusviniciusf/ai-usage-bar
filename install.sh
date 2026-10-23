@@ -14,10 +14,6 @@ chmod +x bin/ai-usage bin/cursor-spend
 ln -sf "$PWD/bin/ai-usage" "$HOME/.local/bin/ai-usage"
 ln -sf "$PWD/bin/cursor-spend" "$HOME/.local/bin/cursor-spend"
 
-if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/ai-usage/config.json" ]; then
-  /usr/bin/python3 "$HOME/.local/bin/ai-usage" --set-budget 60
-fi
-
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v ccusage >/dev/null; then
   if command -v bun >/dev/null; then
@@ -37,4 +33,4 @@ for t in json.load(sys.stdin)["tools"]:
     print("  %-12s today $%.2f  %s" % (t["name"], t["today"], "ERROR: " + t["error"] if t["error"] else "ok"))'
 
 ./build.sh
-echo "Done. Click the sparkles icon in the menu bar, then turn on Login in the footer."
+echo "Done. Click the sparkles icon in the menu bar, then turn on Iniciar com o Mac in the footer."

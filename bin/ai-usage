@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Collect today/week/month AI spend for Cursor, Claude Code and OpenCode as JSON.
+"""Collect cost reports and subscription quotas for detected AI tools as JSON.
 
 Cursor comes from ~/.local/bin/cursor-spend (dashboard API); Claude and OpenCode from ccusage.
 Read by the AI Usage menu bar app. Prints one JSON object to stdout.
 """
 import json
+import math
 import os
+import selectors
 import shutil
 import subprocess
 import sys
@@ -17,36 +19,61 @@ from importlib.machinery import SourceFileLoader
 
 HOME = os.path.expanduser("~")
 CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "ai-usage", "config.json")
-DEFAULT_BUDGET = 60.0
 
 
-def daily_budget():
-    """Env AI_USAGE_DAILY_BUDGET wins, then dailyBudget in the config file, then the default."""
-    try:
-        return float(os.environ["AI_USAGE_DAILY_BUDGET"])
-    except (KeyError, ValueError):
-        pass
+def configuration():
     try:
         with open(CONFIG) as f:
-            return float(json.load(f)["dailyBudget"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return DEFAULT_BUDGET
-
-
-def set_budget(value):
-    os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-    try:
-        with open(CONFIG) as f:
-            config = json.load(f)
+            return json.load(f)
     except (OSError, ValueError):
-        config = {}
-    config["dailyBudget"] = value
+        return {}
+
+
+def tool_budget(tool_id):
+    budget = configuration().get("tools", {}).get(tool_id, {}).get("budget")
+    if not budget:
+        return None
+    amount = float(budget["amount"])
+    if not math.isfinite(amount) or amount <= 0 or budget.get("period") not in ("daily", "monthly"):
+        raise ValueError("Budget must be positive with daily or monthly period")
+    return {"amount": amount, "period": budget["period"]}
+
+
+def global_budget():
+    config = configuration()
+    if "AI_USAGE_DAILY_BUDGET" in os.environ:
+        amount = float(os.environ["AI_USAGE_DAILY_BUDGET"])
+    elif "globalBudget" in config:
+        budget = config["globalBudget"]
+        amount = float(budget["amount"]) if budget else 0
+    else:
+        amount = float(config.get("dailyBudget", 0))
+    if not math.isfinite(amount) or amount < 0:
+        raise ValueError("Global daily budget must be finite and non-negative")
+    return {"amount": amount, "period": "daily"} if amount else None
+
+
+def output_payload(tools):
+    budget = global_budget()
+    return {"updatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
+            # Required numeric field for old app binaries. New UI reads globalBudget.
+            "budget": budget["amount"] if budget else 60.0,
+            "globalBudget": budget,
+            "indicator": configuration().get("indicator", {"mode": "summary"}),
+            "tools": tools}
+
+
+def save_configuration(config):
+    os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
     with open(CONFIG, "w") as f:
         json.dump(config, f, indent=2)
         f.write("\n")
+
+
 HISTORY_DAYS = 14
-ENV = {**os.environ, "PATH": f"{HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
+ENV = {**os.environ, "PATH": f"{HOME}/.local/bin:{HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{os.environ.get('PATH', '')}"}
 CCUSAGE = shutil.which("ccusage", path=ENV["PATH"]) or "ccusage"
+BUN = shutil.which("bun", path=ENV["PATH"])
 
 today = date.today()
 week_start = today - timedelta(days=today.weekday())
@@ -127,16 +154,22 @@ def cursor():
 
 
 def ccusage_json(*args):
-    out = subprocess.run([CCUSAGE, *args, "--json"], capture_output=True, text=True, env=ENV, timeout=180).stdout
+    command = [BUN, "run", "--bun", CCUSAGE] if BUN else [CCUSAGE]
+    result = subprocess.run([*command, *args, "--json"], capture_output=True, text=True, env=ENV, timeout=180)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"ccusage exited with status {result.returncode}")
+    out = result.stdout
     return json.loads(out[out.find("{"):out.rfind("}") + 1])
 
 
 def burn_rate(agent):
     """Cost per hour of the active 5h billing block, 0 when idle or unsupported."""
+    if agent == "opencode":
+        return 0.0  # No supported per-model block report to filter free usage safely.
     try:
         blocks = ccusage_json(agent, "blocks", "--active").get("blocks") or []
         return float(((blocks[0] if blocks else {}).get("burnRate") or {}).get("costPerHour") or 0)
-    except (ValueError, IndexError, subprocess.SubprocessError):
+    except (ValueError, IndexError, RuntimeError, subprocess.SubprocessError):
         return 0.0
 
 
@@ -169,9 +202,29 @@ def opencode_titles(ids):
         return {}
 
 
+def paid_breakdowns(row):
+    """OpenCode costs must be rebuilt per model; ccusage also prices free models."""
+    models = row.get("modelBreakdowns") or []
+    if not models and row.get("totalCost", 0):
+        raise RuntimeError("OpenCode model cost breakdown unavailable; cannot exclude free models safely")
+    return [m for m in models if not is_free_model(m["modelName"])]
+
+
+def is_free_model(name):
+    model = name.rsplit("/", 1)[-1].casefold()
+    return model == "free" or model.endswith(("-free", ":free"))
+
+
 def top_chats(agent):
     """Most expensive sessions active today. A session's cost is its lifetime total, so a multi-day session counts fully."""
     sessions = ccusage_json(agent, "session", "--since", today.strftime("%Y%m%d")).get("sessions", [])
+    if agent == "opencode":
+        filtered = []
+        for session in sessions:
+            models = sorted(paid_breakdowns(session), key=lambda m: -m.get("cost", 0))
+            filtered.append({**session, "totalCost": sum(m.get("cost", 0) for m in models),
+                             "modelsUsed": [m["modelName"] for m in models]})
+        sessions = filtered
     top = sorted((s for s in sessions if s.get("totalCost", 0) > 0), key=lambda s: -s["totalCost"])[:3]
     titles = opencode_titles([s["sessionId"] for s in top]) if agent == "opencode" and top else {}
     chats = []
@@ -193,9 +246,10 @@ def ccusage(agent):
     by_day, by_model = defaultdict(float), defaultdict(float)
     for d in days:
         day = date.fromisoformat(d["date"])
-        by_day[day] += d.get("totalCost", 0)
+        models = paid_breakdowns(d) if agent == "opencode" else d.get("modelBreakdowns", [])
+        by_day[day] += sum(m.get("cost", 0) for m in models) if agent == "opencode" else d.get("totalCost", 0)
         if day == today:
-            for m in d.get("modelBreakdowns", []):
+            for m in models:
                 by_model[m["modelName"]] += m.get("cost", 0)
     return {
         "today": by_day.get(today, 0.0),
@@ -213,26 +267,154 @@ SOURCES = [("cursor", "Cursor", cursor), ("claude", "Claude Code", lambda: ccusa
            ("opencode", "OpenCode", lambda: ccusage("opencode"))]
 
 
+def codex_binary():
+    candidates = [shutil.which("codex"),
+                  "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+                  "/Applications/Codex.app/Contents/Resources/codex",
+                  os.path.join(HOME, ".local/bin/codex"), os.path.join(HOME, ".bun/bin/codex")]
+    return next((p for p in candidates if p and os.path.isfile(p) and os.access(p, os.X_OK)), None)
+
+
+def codex():
+    # Only account reads: never start a turn, change auth, or consume reset credits.
+    process = subprocess.Popen([codex_binary(), "app-server", "--listen", "stdio://"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    pending = b""
+
+    def request(request_id, method, params=None):
+        nonlocal pending
+        message = {"id": request_id, "method": method}
+        if params is not None:
+            message["params"] = params
+        process.stdin.write((json.dumps(message) + "\n").encode())
+        process.stdin.flush()
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            if b"\n" not in pending:
+                if not selector.select(max(0, deadline - time.monotonic())):
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    raise RuntimeError("Codex app-server closed the connection")
+                pending += chunk
+                continue
+            line, pending = pending.split(b"\n", 1)
+            response = json.loads(line)
+            if response.get("id") == request_id:
+                if "error" in response:
+                    raise RuntimeError(response["error"].get("message", "Codex account unavailable"))
+                return response["result"]
+        raise TimeoutError("Codex account read timed out. Open Codex and check your sign-in.")
+
+    try:
+        request(1, "initialize", {"clientInfo": {"name": "ai_usage_bar", "version": "1.1"}})
+        process.stdin.write(b'{"method":"initialized"}\n')
+        process.stdin.flush()
+        result = request(2, "account/rateLimits/read")
+        buckets = result.get("rateLimitsByLimitId") or {"codex": result.get("rateLimits")}
+        quotas = []
+        for bucket_id, bucket in buckets.items():
+            if not bucket:
+                continue
+            for key in ("primary", "secondary"):
+                window = bucket.get(key)
+                if not window or window.get("usedPercent") is None:
+                    continue
+                minutes = window.get("windowDurationMins")
+                label = "Semanal" if minutes == 10080 else (f"{minutes // 60} horas" if minutes and minutes % 60 == 0 else f"{minutes} min" if minutes else key)
+                quotas.append({"id": f"{bucket_id}-{key}", "label": label if len(buckets) == 1 else f"{bucket.get('limitName') or bucket_id} · {label}",
+                               "usedPercent": window["usedPercent"], "resetsAt": window.get("resetsAt")})
+        if not quotas:
+            raise RuntimeError("Codex did not return subscription quotas for this account")
+        return {"today": 0, "week": 0, "month": 0, "monthLabel": "", "daily": [], "models": [],
+                "quotas": quotas, "mode": "quota", "scope": "account"}
+    finally:
+        selector.close()
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        process.stdin.close()
+        process.stdout.close()
+
+
+def detected_sources():
+    cursor_data = os.path.join(HOME, "Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+    claude_data = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.join(HOME, ".claude")), "projects")
+    opencode_data = os.path.join(os.environ.get("XDG_DATA_HOME", os.path.join(HOME, ".local/share")), "opencode")
+    present = {"cursor": os.path.isfile(cursor_data) or os.path.isdir("/Applications/Cursor.app") or os.path.isdir(os.path.join(HOME, "Applications/Cursor.app")),
+               "claude": os.path.isdir(claude_data) or shutil.which("claude", path=ENV["PATH"]) is not None,
+               "opencode": os.path.isdir(opencode_data) or shutil.which("opencode", path=ENV["PATH"]) is not None}
+    sources = [("codex", "Codex", codex)] if codex_binary() else []
+    return sources + [s for s in SOURCES if present[s[0]]]
+
+
 def collect(source):
     tool_id, name, fn = source
     try:
         data = fn()
         data = {k: round(v, 4) if isinstance(v, float) else v for k, v in data.items()}
-        return {"id": tool_id, "name": name, "error": None, **data}
+        return {"id": tool_id, "name": name, "error": None, "mode": "cost", "budget": tool_budget(tool_id),
+                "alertsEnabled": configuration().get("tools", {}).get(tool_id, {}).get("alertsEnabled", True), **data}
     except Exception as err:  # one broken source must not blank the whole bar
         return {"id": tool_id, "name": name, "error": str(err) or type(err).__name__,
-                "today": 0, "week": 0, "month": 0, "monthLabel": "", "daily": history({}), "models": []}
+                "mode": "quota" if tool_id == "codex" else "cost", "today": 0, "week": 0, "month": 0, "monthLabel": "", "daily": [], "models": []}
 
 
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--set-budget":
-        set_budget(float(sys.argv[2]))
-        print(f"dailyBudget = {sys.argv[2]} in {CONFIG}")
+        amount = float(sys.argv[2])
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError("Global daily budget must be finite and non-negative")
+        config = configuration()
+        config["globalBudget"] = {"amount": amount, "period": "daily"} if amount else None
+        if amount:
+            config["dailyBudget"] = amount  # Preserve the old CLI/config contract.
+        save_configuration(config)
+        print("Global daily budget saved")
+        return 0
+    if len(sys.argv) in (3, 4) and sys.argv[1] == "--set-indicator":
+        mode = sys.argv[2]
+        tool_id = sys.argv[3] if len(sys.argv) == 4 else None
+        if mode not in ("summary", "fixed", "urgent") or (mode == "fixed" and tool_id not in {"codex", *(s[0] for s in SOURCES)}):
+            raise ValueError("Usage: ai-usage --set-indicator summary|urgent|fixed [TOOL]")
+        config = configuration()
+        config["indicator"] = {"mode": mode, "toolId": tool_id}
+        save_configuration(config)
+        print("Indicator preference saved")
+        return 0
+    if len(sys.argv) == 4 and sys.argv[1] == "--set-alerts":
+        tool_id, value = sys.argv[2:]
+        if tool_id not in {"codex", *(s[0] for s in SOURCES)} or value not in ("on", "off"):
+            raise ValueError("Usage: ai-usage --set-alerts TOOL on|off")
+        config = configuration()
+        config.setdefault("tools", {}).setdefault(tool_id, {})["alertsEnabled"] = value == "on"
+        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+        with open(CONFIG, "w") as f:
+            json.dump(config, f, indent=2)
+        print("Alert preference saved")
+        return 0
+    if len(sys.argv) == 5 and sys.argv[1] == "--set-tool-budget":
+        tool_id, period, value = sys.argv[2:]
+        amount = float(value)
+        if tool_id not in {s[0] for s in SOURCES} or period not in ("daily", "monthly") or not math.isfinite(amount) or amount < 0:
+            raise ValueError("Use a supported cost tool, daily|monthly and a non-negative amount (0 removes the budget)")
+        config = configuration()
+        config.setdefault("tools", {}).setdefault(tool_id, {})["budget"] = {"amount": amount, "period": period} if amount else None
+        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+        with open(CONFIG, "w") as f:
+            json.dump(config, f, indent=2)
+        print("Tool budget saved")
         return 0
     with ThreadPoolExecutor() as pool:
-        tools = list(pool.map(collect, SOURCES))
-    json.dump({"updatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
-               "budget": daily_budget(), "tools": tools}, sys.stdout)
+        tools = list(pool.map(collect, detected_sources()))
+    if len(sys.argv) > 1:
+        raise ValueError("Unknown command")
+    json.dump(output_payload(tools), sys.stdout)
     return 0
 
 

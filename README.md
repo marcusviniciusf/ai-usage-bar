@@ -1,6 +1,6 @@
 # AI Usage
 
-macOS menu bar app showing today/week/month spend for Cursor, Claude Code and OpenCode.
+A macOS menu bar app for AI tool consumption and subscription quotas. Requires macOS 14+.
 
 ## Install
 
@@ -8,44 +8,58 @@ macOS menu bar app showing today/week/month spend for Cursor, Claude Code and Op
 ./install.sh
 ```
 
-Needs macOS 14+, Xcode Command Line Tools (`xcode-select --install`) and bun or npm.
-The first refresh asks for Keychain access to "Cursor Safe Storage": choose **Always Allow**.
+Requires Xcode Command Line Tools and Bun or npm. Installs to `~/Applications/AI Usage.app`.
+Scripts in `~/.local/bin` are symlinks to this checkout. Rebuild Swift changes with `./build.sh`.
 
-## Pieces
+## Automatic detection
 
-- `bin/ai-usage` — collector, prints JSON.
-- `bin/cursor-spend` — Cursor dashboard API using the editor's local session. Also a CLI (`cursor-spend today`).
-- `main.swift` / `build.sh` — SwiftUI app, installed to `~/Applications/AI Usage.app`.
+Only detected tools appear. Cursor is detected by its app or local database; Claude Code by its CLI or projects directory; OpenCode by its CLI or data directory; Codex by its CLI, including the CLI bundled with ChatGPT or Codex.
+A detected tool with a collection error stays visible. Missing tools are hidden.
+Cursor dashboard access uses its existing local login and may ask for Keychain access.
 
-Claude Code and OpenCode come from local logs via `ccusage`. Each Mac shows only its own usage.
+## Two monitoring modes
 
-## Updating
+- **Subscription quotas:** Codex shows current account quota windows and reset times from the official local app-server `account/rateLimits/read` method. This is account-wide usage, including other devices, and is separate from ChatGPT browser conversations. No turns, logins, credit resets or purchases are initiated.
+- **Cost:** OpenCode, Claude Code and Cursor show local usage costs. Each tool can optionally have a daily or monthly USD budget. Without a budget, only consumption is shown. Estimates from logs are not invoices. OpenCode totals, history, models and top sessions exclude model IDs ending in `-free` or `:free` (case-insensitive), plus the exact ID `free`. Mixed sessions include only non-free model costs. Unknown free tiers without those markers cannot be inferred from the name. If per-model costs are unavailable, the tool reports an error rather than using an unfiltered total. Cursor's month value follows its billing period.
 
-Edit in this repo. Scripts in `~/.local/bin` are symlinks here, so collector changes apply on the next refresh.
-After changing `main.swift`, run `./build.sh`. After `git pull` on another Mac, run `./install.sh` once.
+The menu bar defaults to a compact combined summary: the most consumed subscription quota remaining (percent) plus today's combined cost (USD), identified by icons. Fixed and urgent modes also use compact values; percentages always mean remaining capacity. Full tool names and details remain in the tooltip and app window. In the app settings (gear button), choose combined summary, a fixed tool, or the quota/budget closest to its limit. The urgent mode compares subscription windows, per-tool budgets and the optional global budget; without a limit it falls back to the summary. Data refreshes every five minutes or with the refresh button.
+The chart only combines tools with cost data. Subscription percentages are never converted into dollars or added to that chart.
 
-## Alerts
+## Per-tool preferences
 
-Notifications at 80% and 100% of the daily budget, each at most once per day (checked every 10 min).
-Test them with the cached numbers: `~/Applications/AI\ Usage.app/Contents/MacOS/AIUsage --test-alert`.
-Native notifications from "AI Usage" (System Settings → Notifications → AI Usage).
-
-## Pace
-
-Hero shows combined $/h (Cursor last hour, Claude active 5h block) and how long until the daily budget at that pace.
-The 80% notification includes the same ETA. Expanding Cursor lists today's most expensive chats.
-`build.sh` renders the app icon itself (`AIUsage --icon`), no assets to keep.
-
-## Daily budget
-
-Per Mac, default $60. Set it with:
+Use the settings menu beside each tool. Cost tools offer an optional budget editor; all tools offer an alert toggle.
+Preferences live in `~/.config/ai-usage/config.json` (or `$XDG_CONFIG_HOME/ai-usage/config.json`).
+Existing `dailyBudget` values and `AI_USAGE_DAILY_BUDGET` retain their original global daily meaning. They are never split into tool budgets. The optional global budget is shown separately and excludes subscription quotas. It coexists with individual tool budgets and has its own 80%/100% alerts; incomplete cost collection suppresses global budget alerts.
+New installations have no global budget unless configured. On this Mac, `globalBudget: null` explicitly disables it while preserving the legacy key. The environment override has precedence.
+The collector retains the old numeric `budget` JSON field so existing binaries keep decoding after `git pull`; the updated app distinguishes that compatibility field from the optional `globalBudget`. Old binaries continue their original budget behavior until rebuilt. The new app can also read old collector payloads.
+Update another Mac with `git pull` and `./install.sh`. Its own configuration is preserved; this Mac's preferences are not copied.
 
 ```bash
-ai-usage --set-budget 80
+ai-usage --set-budget 80  # global daily budget; original command preserved
+ai-usage --set-budget 0   # disable global budget in the new app
+ai-usage --set-indicator summary
+ai-usage --set-indicator urgent
+ai-usage --set-indicator fixed opencode
+ai-usage --set-tool-budget opencode daily 10
+ai-usage --set-tool-budget opencode monthly 100
+ai-usage --set-tool-budget opencode monthly 0  # remove budget
+ai-usage --set-alerts codex off
 ```
 
-That writes `dailyBudget` to `~/.config/ai-usage/config.json` (edit by hand works too). The env var
-`AI_USAGE_DAILY_BUDGET` overrides the file. Applies on the next refresh (10 min) or after reopening the app.
+Budget settings are advisory and never block tools. Alerts fire at 80% and 100%, deduplicated by tool and quota reset or calendar period. Notifications require macOS permission.
+OpenCode and Claude top sessions show lifetime session cost and may span multiple days; the UI labels this separately from today's models.
+Enable automatic startup with **Iniciar com o Mac**.
 
-Top chats today: Cursor from the dashboard, Claude from session titles in `~/.claude/projects`, OpenCode from its DB.
-A session's cost is its lifetime total, so a session spanning several days counts fully.
+## Validation
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 tests/check_swift.py  # compiles actual old and new Swift models
+./build.sh
+```
+
+Render the current cached view without changing preferences:
+
+```bash
+~/Applications/AI\ Usage.app/Contents/MacOS/AIUsage --snapshot /tmp/ai-usage.png Today
+```

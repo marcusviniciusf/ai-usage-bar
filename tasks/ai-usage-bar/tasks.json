@@ -1,0 +1,80 @@
+{
+  "project": "ai-usage-bar",
+  "description": "",
+  "prefix": "AUB",
+  "updated_at": "2026-10-23",
+  "tasks": [
+    {
+      "id": "AUB-001",
+      "title": "Instalar e validar AI Usage neste Mac",
+      "description": "Executar instalador, verificar coleta das tres fontes e abertura do aplicativo na barra do macOS.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "completed_at": "2026-10-23",
+      "evidence": "App instalado em ~/Applications/AI Usage.app; processo ativo e cache atualizado. Coletor ajustado para executar ccusage via Bun sem depender do Node/NVM. OpenCode hoje 1.1206 USD; Claude sem logs retorna zero sem erro; Cursor indisponivel por ausencia do banco local. Renderizacao --snapshot inspecionada; interacao com menu nao validada porque CUA retornou timeout."
+    },
+    {
+      "id": "AUB-002",
+      "title": "Detectar ferramentas e exibir cotas do Codex e orcamentos por ferramenta",
+      "description": "Ocultar ferramentas ausentes, integrar Codex via app-server, eliminar budget global, configurar limites por ferramenta e validar app reinstalado.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "completed_at": "2026-10-23",
+      "evidence": "App recompilado e reinstalado. Coleta real via Codex app-server e ccusage sem erros; somente Codex e OpenCode detectados, ambos sem orçamento monetario configurado. Cotas separadas de custos e limite global removido. Quatro testes passam: deteccao, budgets/alertas isolados, protocolo Codex multi-bucket e erro preservado. git diff --check limpo. Preview SwiftUI renderizado e inspecionado. AX do app conferido; cliques completos limitados por timeouts de CUA."
+    },
+    {
+      "id": "AUB-003",
+      "title": "Excluir modelos gratuitos dos custos do OpenCode",
+      "description": "Filtrar modelos free de totais, historico, modelos, sessoes e alertas; cobrir sessoes mistas com testes; atualizar app e verificar semana real.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "completed_at": "2026-10-23",
+      "evidence": "Custos OpenCode recalculados pelos breakdowns, excluindo IDs -free/:free ou free; totais diario/semanal/mensal, historico, modelos e ranking de sessoes mistas corrigidos. Sem breakdown, erro explicito em vez de total contaminado. Sete testes passam e git diff --check limpo. App recompilado, relancado apos erro transitorio -600 do open, processo ativo e cache verificado: semana 7.3849 USD contra 64.47 anteriores. Render Week inspecionado."
+    },
+    {
+      "id": "AUB-004",
+      "title": "Preservar budget global legado e configurar indicador da barra",
+      "description": "Restaurar contrato JSON e CLI antigos, manter limite global sem duplicacao por ferramenta, configurar resumo/ferramenta fixa/mais proximo do limite e testar modelos Swift antigo e atual.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "completed_at": "2026-10-23",
+      "evidence": "Budget global diario legado e CLI --set-budget restaurados, com override de ambiente e desativacao explicita local. Coletor mantem campo numerico budget para binarios antigos; novo app distingue globalBudget null. Indicador configuravel combinado/fixo/mais proximo do limite via engrenagem, com nomes e custos separados de cotas. 9 testes Python passaram; teste Swift compilou fontes reais da versao antiga e atual e validou contratos nos dois sentidos e modos do indicador. App instalado via install.sh e reconstruido apos ajustes; cache real sem budget global neste Mac. Render de barra e janela inspecionado. Outro Mac nao acessado nem atualizado."
+    },
+    {
+      "id": "AUB-005",
+      "title": "Compactar indicador da barra sem perder resumo de consumo",
+      "description": "Remover nomes longos do indicador, agrupar cota restante e custo diario com icones, manter detalhes no tooltip e validar render.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "completed_at": "2026-10-23",
+      "evidence": "Indicador compacto com icone da cota e percentual restante, icone de custos e total diario USD. Nomes e detalhes preservados no tooltip e acessibilidade. Fixo/urgente tambem compactos e percentuais sempre restantes. Build reinstalado; teste Swift de formatos antigo/novo e valores compactos passou; git diff --check limpo e snapshot inspecionado."
+    },
+    {
+      "id": "AUB-006",
+      "title": "Mostrar icones reais das ferramentas na barra do macOS",
+      "description": "Usar icones dos apps instalados junto dos respectivos valores; renderizar label em uma unica imagem para evitar descarte de partes pelo MenuBarExtra; validar modo combinado.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "completed_at": "2026-10-23",
+      "evidence": "Icones reais obtidos dos bundles locais ChatGPT.app e OpenCode.app, associados aos IDs de cada parte do indicador e tambem aos cards. MenuBarExtra recebe uma imagem unica com todos os icones/valores, sem extracao parcial de HStack. Build reinstalado e processo ativo; testes Swift de compatibilidade e identidade dos icones passaram, diff check limpo e render ai-usage-icones-apps.png inspecionado com ambos os icones."
+    }
+  ]
+}

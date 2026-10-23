@@ -31,13 +31,19 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>AIUsage</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.1</string>
+  <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
 </dict></plist>
 PLIST
 codesign --force -s - "$APP"
 touch "$APP"
-open "$APP"
+# LaunchServices can briefly report -600 while the old process exits.
+launched=false
+for attempt in 1 2 3; do
+  if open "$APP"; then launched=true; break; fi
+  sleep 1
+done
+if [ "$launched" != true ]; then echo "Built $APP, but macOS could not relaunch it." >&2; exit 1; fi
 echo "Installed $APP"
