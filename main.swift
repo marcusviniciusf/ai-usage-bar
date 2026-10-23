@@ -1,6 +1,17 @@
 import Charts
 import ServiceManagement
 import SwiftUI
+import UserNotifications
+
+/// Shows banners even while the popover is open (the app counts as frontmost then).
+final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationPresenter()
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound, .list])
+    }
+}
 
 // MARK: - Model
 
@@ -93,6 +104,7 @@ final class Store: ObservableObject {
     init(cachedOnly: Bool = false) {
         usage = try? Self.decoder.decode(Usage.self, from: Data(contentsOf: cache))
         guard !cachedOnly else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -143,19 +155,20 @@ final class Store: ObservableObject {
         notify(usage, level: level)
     }
 
-    static func notify(_ usage: Usage, level: Double) {
+    /// Native notification; calls `done` once it is handed to the system (or permission is denied).
+    nonisolated static func notify(_ usage: Usage, level: Double, done: @escaping @Sendable () -> Void = {}) {
         let total = usage.total(.today)
-        let isOver = level >= 1
-        let title = isOver ? "AI spend over budget" : "Approaching daily AI budget"
-        let subtitle = "Today \(total.dollars) of \(usage.budget.shortDollars) (\(Int((total / usage.budget * 100).rounded()))%)"
-        let split = usage.tools.map { "\($0.name) \($0.today.dollars)" }.joined(separator: " · ")
-        let script = "display notification \"\(split)\" with title \"\(title)\" subtitle \"\(subtitle)\" "
-            + "sound name \"\(isOver ? "Funk" : "Tink")\""
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        try? process.run()
-        process.waitUntilExit()
+        let content = UNMutableNotificationContent()
+        content.title = level >= 1 ? "AI spend over budget" : "Approaching daily AI budget"
+        content.subtitle = "Today \(total.dollars) of \(usage.budget.shortDollars) (\(Int((total / usage.budget * 100).rounded()))%)"
+        content.body = usage.tools.map { "\($0.name) \($0.today.dollars)" }.joined(separator: " · ")
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "budget-\(level)", content: content, trigger: nil)
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return done() }
+            center.add(request) { _ in done() }
+        }
     }
 
     nonisolated private static func run(_ path: String) throws -> Data {
@@ -611,9 +624,12 @@ struct AIUsageApp: App {
     @StateObject private var store = Store()
 
     init() {
+        UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
         // `AIUsage --test-alert` sends both alert levels with the cached numbers and exits.
         if CommandLine.arguments.contains("--test-alert"), let usage = Store(cachedOnly: true).usage {
-            Store.alertLevels.forEach { Store.notify(usage, level: $0) }
+            let sent = DispatchSemaphore(value: 0)
+            Store.alertLevels.forEach { Store.notify(usage, level: $0) { sent.signal() } }
+            Store.alertLevels.forEach { _ in _ = sent.wait(timeout: .now() + 60) }
             exit(0)
         }
         // `AIUsage --snapshot out.png [Today|Week|Month]` renders the popover from the cached JSON and exits.
