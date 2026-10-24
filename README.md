@@ -2,6 +2,25 @@
 
 A macOS menu bar app for AI tool consumption and subscription quotas. Requires macOS 14+.
 
+## Preview
+
+All values and session names below are fictional demo data, rendered in an isolated temporary cache.
+
+<p align="center">
+  <img src="docs/images/ai-usage-menu-bar.png" width="400" alt="AI Usage menu bar indicator with fictional values" />
+</p>
+
+<p align="center">
+  <img src="docs/images/ai-usage-panel.png" width="340" alt="AI Usage overview with fictional Codex quota and OpenCode costs" />
+  <img src="docs/images/ai-usage-codex-quota.png" width="340" alt="Expanded Codex quota details with fictional values" />
+</p>
+
+<p align="center">
+  <img src="docs/images/ai-usage-opencode-costs.png" width="340" alt="Expanded OpenCode model and session costs with fictional values" />
+</p>
+
+After rebuilding the app, regenerate these images with `python3 scripts/render_demo_screenshots.py`.
+
 ## Install
 
 ```bash

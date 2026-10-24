@@ -2,7 +2,7 @@
   "project": "ai-usage-bar",
   "description": "",
   "prefix": "AUB",
-  "updated_at": "2026-10-23",
+  "updated_at": "2026-10-24",
   "tasks": [
     {
       "id": "AUB-001",
@@ -75,6 +75,53 @@
       "updated_at": "2026-10-23",
       "completed_at": "2026-10-23",
       "evidence": "Icones reais obtidos dos bundles locais ChatGPT.app e OpenCode.app, associados aos IDs de cada parte do indicador e tambem aos cards. MenuBarExtra recebe uma imagem unica com todos os icones/valores, sem extracao parcial de HStack. Build reinstalado e processo ativo; testes Swift de compatibilidade e identidade dos icones passaram, diff check limpo e render ai-usage-icones-apps.png inspecionado com ambos os icones."
+    },
+    {
+      "id": "AUB-007",
+      "title": "Clarify Codex quota display and verify settings",
+      "description": "Review each visible settings action and improve Codex quota row labels and spacing.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24",
+      "history": [
+        {
+          "at": "2026-10-24",
+          "from_status": "pending",
+          "to_status": "completed",
+          "evidence": "Audited the settings menu: indicator modes, tool filters, daily budget, language and quit all have handlers; launch-at-login uses SMAppService and now displays registration errors. Codex row now stacks clearly labeled used percentages, short forecast states the affected quota and estimated time, and expanded details keep the full explanation. Removed stale Claude/Cursor onboarding copy. 11 Python tests and Swift compatibility/forecast checks pass; app rebuilt and running; rendered Codex panel inspected; diff check clean."
+        },
+        {
+          "at": "2026-10-24",
+          "from_status": "completed",
+          "to_status": "completed",
+          "evidence": "Audited settings actions; Codex quota summary now explicitly reads as a forecast, split into “Previsão: cota 5h” and “Esgota em …”. Full pace explanation remains in expanded details. Startup errors are surfaced. Python and Swift tests pass; app rebuilt and rendered panel inspected."
+        }
+      ],
+      "completed_at": "2026-10-24",
+      "evidence": "Audited settings actions; Codex quota summary now explicitly reads as a forecast, split into “Previsão: cota 5h” and “Esgota em …”. Full pace explanation remains in expanded details. Startup errors are surfaced. Python and Swift tests pass; app rebuilt and rendered panel inspected."
+    },
+    {
+      "id": "AUB-008",
+      "title": "Add fictional demo screenshots to GitHub README",
+      "description": "Render menu bar and app panel screenshots with synthetic numbers in an isolated cache, then publish the images in the README.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24",
+      "history": [
+        {
+          "at": "2026-10-24",
+          "from_status": "pending",
+          "to_status": "completed",
+          "evidence": "Added a generator that writes only to a temporary cache and renders four demo images (menu bar, overview, expanded Codex quota and OpenCode costs). README captions identify all values and session names as fictional. Rendered and visually inspected all PNGs; 11 Python tests, Swift compatibility tests and app build pass."
+        }
+      ],
+      "completed_at": "2026-10-24",
+      "evidence": "Added a generator that writes only to a temporary cache and renders four demo images (menu bar, overview, expanded Codex quota and OpenCode costs). README captions identify all values and session names as fictional. Rendered and visually inspected all PNGs; 11 Python tests, Swift compatibility tests and app build pass."
     }
-  ]
+  ],
+  "schema_version": 1
 }

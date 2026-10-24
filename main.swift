@@ -72,9 +72,13 @@ enum L10n {
             "No tools": "Sem ferramentas",
             "At this pace it runs out in ~%@, before it renews": "No ritmo atual esgota em ~%@, antes de renovar",
             "At this pace it reaches ~%@%% when it renews": "No ritmo atual chega a ~%@%% ao renovar",
+            "Forecast: %@ quota": "Previsão: cota %@",
+            "Runs out in ~%@": "Esgota em ~%@",
+            "No tools detected. Open Codex or OpenCode to get started.": "Nenhuma ferramenta detectada. Abra o Codex ou OpenCode para começar.",
             "Today": "Hoje", "Week": "Semana", "Month": "Mês",
             "Collector returned unreadable output": "O coletor retornou uma saída ilegível",
             "Could not save the setting.": "Não foi possível salvar a configuração.",
+            "Could not update launch at login.": "Não foi possível alterar a abertura ao iniciar.",
             "Today: %@ of %@": "Hoje: %@ de %@",
             "At %@/h the limit is reached in ~%@": "No ritmo de %@/h, limite em ~%@",
             "Global budget · Limit reached": "Orçamento global · Limite atingido",
@@ -87,7 +91,6 @@ enum L10n {
             "Usage": "Consumo",
             "%@ percent": "%@ por cento",
             "All tools are hidden. Turn one on in the gear menu.": "Todas as ferramentas estão ocultas. Ative alguma na engrenagem.",
-            "No tools detected. Open Codex, OpenCode, Claude Code or Cursor to get started.": "Nenhuma ferramenta detectada. Abra o Codex, OpenCode, Claude Code ou Cursor para começar.",
             "Updating…": "Atualizando…",
             "Updated %@": "Atualizado %@",
             "Refresh usage": "Atualizar consumo",
@@ -155,9 +158,13 @@ enum L10n {
             "No tools": "Sin herramientas",
             "At this pace it runs out in ~%@, before it renews": "Al ritmo actual se agota en ~%@, antes de renovarse",
             "At this pace it reaches ~%@%% when it renews": "Al ritmo actual llega a ~%@%% al renovarse",
+            "Forecast: %@ quota": "Previsión: cuota %@",
+            "Runs out in ~%@": "Se agota en ~%@",
+            "No tools detected. Open Codex or OpenCode to get started.": "No se detectó ninguna herramienta. Abre Codex u OpenCode para empezar.",
             "Today": "Hoy", "Week": "Semana", "Month": "Mes",
             "Collector returned unreadable output": "El recolector devolvió una salida ilegible",
             "Could not save the setting.": "No se pudo guardar la configuración.",
+            "Could not update launch at login.": "No se pudo cambiar el inicio de sesión.",
             "Today: %@ of %@": "Hoy: %@ de %@",
             "At %@/h the limit is reached in ~%@": "A %@/h, el límite se alcanza en ~%@",
             "Global budget · Limit reached": "Presupuesto global · Límite alcanzado",
@@ -170,7 +177,6 @@ enum L10n {
             "Usage": "Consumo",
             "%@ percent": "%@ por ciento",
             "All tools are hidden. Turn one on in the gear menu.": "Todas las herramientas están ocultas. Activa alguna en el engranaje.",
-            "No tools detected. Open Codex, OpenCode, Claude Code or Cursor to get started.": "No se detectó ninguna herramienta. Abre Codex, OpenCode, Claude Code o Cursor para empezar.",
             "Updating…": "Actualizando…",
             "Updated %@": "Actualizado %@",
             "Refresh usage": "Actualizar consumo",
@@ -324,22 +330,22 @@ struct Usage: Codable {
             if tool.error != nil { return tr("%@ unavailable", tool.name) }
             if tool.mode == "quota" {
                 guard let quota = tool.quotas?.max(by: { $0.usedPercent < $1.usedPercent }) else { return tr("%@ no quota", tool.name) }
-                return tr("%@ %@%% left", tool.name, String(Int(max(0, 100 - quota.usedPercent))))
+                return tr("%@ %@%% left", tool.name, max(0, 100 - quota.usedPercent).percentValue)
             }
             return "\(tool.name) \(tool.today.dollars)"
         }
         var candidates: [(Double, String)] = []
         for tool in tools where tool.error == nil {
             for quota in tool.quotas ?? [] {
-                candidates.append((quota.usedPercent / 100, tr("%@ %@%% left", tool.name, String(Int(max(0, 100 - quota.usedPercent))))))
+                candidates.append((quota.usedPercent / 100, tr("%@ %@%% left", tool.name, max(0, 100 - quota.usedPercent).percentValue)))
             }
             if let budget = tool.budget, budget.amount > 0 {
                 let amount = budget.period == "monthly" ? tool.month : tool.today
-                candidates.append((amount / budget.amount, tr("%@ %@%% used", tool.name, String(Int((amount / budget.amount * 100).rounded())))))
+                candidates.append((amount / budget.amount, tr("%@ %@%% used", tool.name, (amount / budget.amount * 100).percentValue)))
             }
         }
         if let globalBudget, !hasPartialCosts {
-            candidates.append((total(.today) / globalBudget.amount, tr("Global %@%% used", String(Int((total(.today) / globalBudget.amount * 100).rounded())))))
+            candidates.append((total(.today) / globalBudget.amount, tr("Global %@%% used", (total(.today) / globalBudget.amount * 100).percentValue)))
         }
         let highest = candidates.max { $0.0 < $1.0 }
         let mode = indicator?.mode ?? "summary"
@@ -427,7 +433,7 @@ struct Tool: Codable, Identifiable {
         }
 
         /// Linear projection of the usage so far over the rest of the window.
-        var forecast: (text: String, isUrgent: Bool)? {
+        var forecast: (text: String, rowText: String?, isUrgent: Bool)? {
             guard let reset = resetsAt, let mins = windowMins, mins > 0, usedPercent > 0, usedPercent < 100 else { return nil }
             let remaining = reset - Date.now.timeIntervalSince1970
             let elapsed = mins * 60 - remaining
@@ -435,9 +441,11 @@ struct Tool: Codable, Identifiable {
             let perSecond = usedPercent / elapsed
             let projected = usedPercent + perSecond * remaining
             if projected >= 100 {
-                return (tr("At this pace it runs out in ~%@, before it renews", duration(hours: (100 - usedPercent) / perSecond / 3600)), true)
+                let timeToLimit = duration(hours: (100 - usedPercent) / perSecond / 3600)
+                return (tr("At this pace it runs out in ~%@, before it renews", timeToLimit),
+                        "\(tr("Forecast: %@ quota", shortTitle))\n\(tr("Runs out in ~%@", timeToLimit))", true)
             }
-            return (tr("At this pace it reaches ~%@%% when it renews", String(Int(projected.rounded()))), false)
+            return (tr("At this pace it reaches ~%@%% when it renews", projected.percentValue), nil, false)
         }
     }
 
@@ -588,7 +596,7 @@ final class Store: ObservableObject {
             }
             for quota in tool.quotas ?? [] {
                 checks.append(("\(quota.id)-\(quota.resetsAt ?? 0)", quota.usedPercent / 100,
-                               tr("%@: %@%% used", quota.title, String(Int(quota.usedPercent)))))
+                               tr("%@: %@%% used", quota.title, quota.usedPercent.percentValue)))
             }
             let forecasts = Dictionary(uniqueKeysWithValues: (tool.quotas ?? []).map { ("\($0.id)-\($0.resetsAt ?? 0)", $0.forecast?.text) })
             for (period, ratio, detail) in checks {
@@ -706,9 +714,10 @@ final class Store: ObservableObject {
 // MARK: - Formatting & theme
 
 extension Double {
-    var compactDollars: String { "$" + formatted(.number.precision(.fractionLength(2)).locale(Locale(identifier: "pt_BR"))) }
-    var dollars: String { formatted(.currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US"))) }
-    var shortDollars: String { formatted(.currency(code: "USD").precision(.fractionLength(0)).locale(Locale(identifier: "en_US"))) }
+    var compactDollars: String { "$" + formatted(.number.precision(.fractionLength(0...1)).locale(Locale(identifier: "pt_BR"))) }
+    var dollars: String { formatted(.currency(code: "USD").precision(.fractionLength(0...1)).locale(Locale(identifier: "en_US"))) }
+    var shortDollars: String { formatted(.currency(code: "USD").precision(.fractionLength(0...1)).locale(Locale(identifier: "en_US"))) }
+    var percentValue: String { formatted(.number.precision(.fractionLength(0...1)).locale(L10n.locale)) }
 }
 
 extension Color {
@@ -848,6 +857,7 @@ struct ContentView: View {
     @State private var editingTool: Tool?
     @State private var editingGlobalBudget = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var launchSettingError: String?
     @AppStorage("chartExpanded") private var chartExpanded = false
 
     init(window: Window = .today, expanded: String? = nil) {
@@ -865,7 +875,7 @@ struct ContentView: View {
                 if usage.tools.isEmpty {
                     Text(usage.availableTools?.isEmpty == false
                          ? tr("All tools are hidden. Turn one on in the gear menu.")
-                         : tr("No tools detected. Open Codex, OpenCode, Claude Code or Cursor to get started."))
+                         : tr("No tools detected. Open Codex or OpenCode to get started."))
                         .font(.system(size: 12)).foregroundStyle(Theme.secondary).padding(.vertical, 24)
                 }
             } else {
@@ -897,6 +907,8 @@ struct ContentView: View {
                 Group {
                     if let failure = store.failure {
                         Text(failure).foregroundStyle(Theme.bad)
+                    } else if let launchSettingError {
+                        Text(launchSettingError).foregroundStyle(Theme.bad)
                     } else if store.isLoading {
                         Text(tr("Updating…"))
                     } else if let updated = store.usage?.updatedAt {
@@ -918,7 +930,15 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help(tr("Refresh usage"))
-            settingsMenu
+            if CommandLine.arguments.contains("--snapshot") {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.white.opacity(0.06)))
+            } else {
+                settingsMenu
+            }
         }
     }
 
@@ -969,7 +989,12 @@ struct ContentView: View {
     }
 
     private func toggleLaunchAtLogin() {
-        try? launchAtLogin ? SMAppService.mainApp.unregister() : SMAppService.mainApp.register()
+        do {
+            try launchAtLogin ? SMAppService.mainApp.unregister() : SMAppService.mainApp.register()
+            launchSettingError = nil
+        } catch {
+            launchSettingError = tr("Could not update launch at login.")
+        }
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
@@ -994,7 +1019,7 @@ struct ContentView: View {
                     .animation(.snappy, value: total)
                 Spacer()
                 if allowed > 0 {
-                    Text("\(Int((ratio * 100).rounded()))%")
+                    Text("\((ratio * 100).percentValue)%")
                         .font(.system(size: 11.5, weight: .bold, design: .rounded))
                         .foregroundStyle(isWarm ? Theme.bad : Theme.good)
                         .padding(.horizontal, 7).padding(.vertical, 2)
@@ -1077,8 +1102,9 @@ struct ContentView: View {
         if let error = tool.error {
             Text(error).font(.system(size: 10.5)).foregroundStyle(Theme.bad).lineLimit(1)
         } else if tool.mode == "quota" {
-            if let urgent = tool.quotas?.compactMap({ $0.forecast }).first(where: { $0.isUrgent }) {
-                Text(urgent.text).font(.system(size: 10.5)).foregroundStyle(Theme.bad).lineLimit(1)
+            if let urgent = tool.quotas?.compactMap({ $0.forecast }).first(where: { $0.isUrgent }), let rowText = urgent.rowText {
+                Text(rowText).font(.system(size: 10.5)).foregroundStyle(Theme.bad)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(tr("Subscription")).font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
             }
@@ -1091,7 +1117,7 @@ struct ContentView: View {
         var parts: [String] = []
         if let budget = tool.budget {
             let spent = budget.period == "monthly" ? tool.month : tool.today
-            parts.append(tr("%@%% of budget", String(Int((spent / budget.amount * 100).rounded()))))
+            parts.append(tr("%@%% of budget", (spent / budget.amount * 100).percentValue))
         }
         if let rate = tool.rate, rate > 0.5 { parts.append("\(rate.shortDollars)/h") }
         return parts.isEmpty ? (tool.id == "opencode" ? tr("Paid models") : tr("Local usage")) : parts.joined(separator: " · ")
@@ -1102,14 +1128,16 @@ struct ContentView: View {
         if tool.error != nil {
             EmptyView()
         } else if tool.mode == "quota" {
-            HStack(spacing: 5) {
+            VStack(alignment: .trailing, spacing: 3) {
                 ForEach(tool.quotas ?? []) { quota in
                     let isHot = quota.usedPercent >= 80
-                    Text("\(quota.shortTitle) \(Int(quota.usedPercent.rounded()))%")
-                        .font(.system(size: 10.5, weight: .semibold, design: .rounded)).monospacedDigit()
-                        .foregroundStyle(isHot ? Theme.bad : Theme.primary)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill((isHot ? Theme.bad : Color.white).opacity(isHot ? 0.14 : 0.08)))
+                    HStack(spacing: 4) {
+                        Text(quota.shortTitle).foregroundStyle(Theme.secondary)
+                        Text(tr("%@%% used", quota.usedPercent.percentValue))
+                            .fontWeight(.semibold).foregroundStyle(isHot ? Theme.bad : Theme.primary)
+                    }
+                    .font(.system(size: 10.5, design: .rounded)).monospacedDigit()
+                    .help(tr("%@: %@%% used", quota.title, quota.usedPercent.percentValue))
                 }
             }
         } else {
@@ -1139,7 +1167,7 @@ struct ContentView: View {
             HStack {
                 Text(quota.title).foregroundStyle(Theme.secondary)
                 Spacer()
-                Text(tr("%@%% used", String(Int(quota.usedPercent.rounded())))).fontWeight(.semibold).monospacedDigit()
+                Text(tr("%@%% used", quota.usedPercent.percentValue)).fontWeight(.semibold).monospacedDigit()
             }.font(.system(size: 11.5))
             UsageBar(fraction: quota.usedPercent / 100, color: quota.usedPercent >= 80 ? Theme.bad : tool.color)
             if let reset = quota.resetsAt {
@@ -1202,21 +1230,27 @@ struct ContentView: View {
         Text(text.uppercased()).font(.system(size: 9, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.tertiary)
     }
 
+    @ViewBuilder
     private func toolMenu(_ tool: Tool) -> some View {
-        Menu {
-            if tool.mode != "quota" { Button(tr("Set budget…")) { editingTool = tool } }
-            Button(tr(tool.alertsEnabled == false ? "Turn alerts on" : "Turn alerts off")) {
-                store.setAlerts(tool: tool, enabled: tool.alertsEnabled == false)
-            }
-            if tool.id == "cursor" {
-                Divider()
-                Button(tr("Open Cursor dashboard")) { NSWorkspace.shared.open(URL(string: "https://cursor.com/dashboard?tab=usage")!) }
-            }
-        } label: {
+        if CommandLine.arguments.contains("--snapshot") {
             Label(tr(tool.alertsEnabled == false ? "Options · alerts off" : "Options"), systemImage: "ellipsis.circle")
                 .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.secondary)
+        } else {
+            Menu {
+                if tool.mode != "quota" { Button(tr("Set budget…")) { editingTool = tool } }
+                Button(tr(tool.alertsEnabled == false ? "Turn alerts on" : "Turn alerts off")) {
+                    store.setAlerts(tool: tool, enabled: tool.alertsEnabled == false)
+                }
+                if tool.id == "cursor" {
+                    Divider()
+                    Button(tr("Open Cursor dashboard")) { NSWorkspace.shared.open(URL(string: "https://cursor.com/dashboard?tab=usage")!) }
+                }
+            } label: {
+                Label(tr(tool.alertsEnabled == false ? "Options · alerts off" : "Options"), systemImage: "ellipsis.circle")
+                    .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.secondary)
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
     }
 
     // MARK: History

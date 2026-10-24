@@ -39,12 +39,17 @@ old_test = common + '''
 new_test = common + '''
         check(usage.globalBudget?.amount == 80)
         check(usage.total(.today) == 8)
+        check(3.0.dollars == "$3")
+        check(3.08.dollars == "$3.1")
+        check(3.0.compactDollars == "$3")
+        check(3.08.compactDollars == "$3,1")
+        check(76.44.percentValue == "76,4")
         check(usage.indicatorPresentation.text.contains("Codex 70% livre"))
-        check(usage.indicatorPresentation.text.contains("OpenCode $8.00"))
+        check(usage.indicatorPresentation.text.contains("OpenCode $8"))
         check(usage.indicatorPresentation.warning)
         check(usage.compactIndicatorParts.count == 2)
         check(usage.compactIndicatorParts[0].text == "70%")
-        check(usage.compactIndicatorParts[1].text == "$8,00")
+        check(usage.compactIndicatorParts[1].text == "$8")
         check(usage.compactIndicatorParts[0].toolId == "codex")
         check(usage.compactIndicatorParts[1].toolId == "opencode")
         var json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -62,7 +67,7 @@ new_test = common + '''
         json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "opencode"]]
         check(try read().compactIndicatorParts.count == 2)
         check(try read().compactIndicatorParts[0].text == "70%")
-        check(try read().indicatorPresentation.text == "Codex 70% livre · OpenCode $8.00")
+        check(try read().indicatorPresentation.text == "Codex 70% livre · OpenCode $8")
         check(try read().indicatorPresentation.warning)
         json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "opencode", "extra"]]
         check(try read().compactIndicatorParts.count == 2)
@@ -72,15 +77,15 @@ new_test = common + '''
         json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "opencode"]]
         json["availableTools"] = [["id": "codex", "name": "Codex", "enabled": false], ["id": "opencode", "name": "OpenCode", "enabled": true]]
         check(try read().compactIndicatorParts.count == 1)
-        check(try read().indicatorPresentation.text == "OpenCode $8.00")
+        check(try read().indicatorPresentation.text == "OpenCode $8")
         json.removeValue(forKey: "availableTools")
         json["indicator"] = ["mode": "summary"]
         UserDefaults.standard.set("en", forKey: "language")
-        check(try read().indicatorPresentation.text == "Codex 70% left · OpenCode $8.00")
+        check(try read().indicatorPresentation.text == "Codex 70% left · OpenCode $8")
         UserDefaults.standard.set("es", forKey: "language")
-        check(try read().indicatorPresentation.text == "Codex 70% libre · OpenCode $8.00")
+        check(try read().indicatorPresentation.text == "Codex 70% libre · OpenCode $8")
         UserDefaults.standard.set("pt", forKey: "language")
-        check(try read().indicatorPresentation.text == "Codex 70% livre · OpenCode $8.00")
+        check(try read().indicatorPresentation.text == "Codex 70% livre · OpenCode $8")
         check(L10n.translate("Unknown key %@", ["x"]) == "Unknown key x")
         let weekly = Tool.Quota(id: "w", label: "Semanal", usedPercent: 10, resetsAt: nil, windowMins: 10080)
         check(weekly.title == "Semanal" && weekly.shortTitle == "Sem")
@@ -88,6 +93,12 @@ new_test = common + '''
         check(weekly.title == "Weekly" && weekly.shortTitle == "Wk")
         check(Tool.Quota(id: "h", label: "5 horas", usedPercent: 10, resetsAt: nil, windowMins: 300).title == "5 hours")
         UserDefaults.standard.set("pt", forKey: "language")
+        let imminent = Tool.Quota(id: "h", label: "5 horas", usedPercent: 99,
+                                  resetsAt: Date.now.timeIntervalSince1970 + 600, windowMins: 300)
+        check(imminent.forecast?.isUrgent == true)
+        check(imminent.forecast?.rowText?.contains("Previsão: cota 5h") == true &&
+              imminent.forecast?.rowText?.contains("Esgota em ~") == true)
+        check(imminent.forecast?.text.contains("antes de renovar") == true)
         json["globalBudget"] = NSNull()
         check(try read().globalBudget == nil)
         json.removeValue(forKey: "globalBudget")
