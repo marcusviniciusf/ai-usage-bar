@@ -28,7 +28,7 @@ After rebuilding the app, regenerate these images with `python3 scripts/render_d
 ```
 
 Requires Xcode Command Line Tools and Bun or npm. Installs to `~/Applications/AI Usage.app`.
-Scripts in `~/.local/bin` are symlinks to this checkout. Rebuild Swift changes with `./build.sh`.
+Collector scripts are copied to `~/.local/bin`, outside macOS-protected folders such as Documents. Re-run `./install.sh` after collector changes; rebuild Swift changes with `./build.sh`.
 
 ## Automatic detection
 
@@ -39,9 +39,9 @@ Cursor dashboard access uses its existing local login and may ask for Keychain a
 ## Two monitoring modes
 
 - **Subscription quotas:** Codex shows current account quota windows and reset times from the official local app-server `account/rateLimits/read` method. This is account-wide usage, including other devices, and is separate from ChatGPT browser conversations. No turns, logins, credit resets or purchases are initiated.
-- **Cost:** OpenCode, Claude Code and Cursor show local usage costs. Each tool can optionally have a daily or monthly USD budget. Without a budget, only consumption is shown. Estimates from logs are not invoices. OpenCode totals, history, models and top sessions exclude model IDs ending in `-free` or `:free` (case-insensitive), plus the exact ID `free`. Mixed sessions include only non-free model costs. Unknown free tiers without those markers cannot be inferred from the name. If per-model costs are unavailable, the tool reports an error rather than using an unfiltered total. Cursor's month value follows its billing period.
+- **Cost:** OpenCode, Claude Code and Cursor show local usage costs. Calendar-month totals and per-tool monthly budgets use the calendar month; Cursor's plan limit and spend are shown separately for its billing cycle. Each cost tool can optionally have a daily or monthly USD budget. Without a budget, only consumption is shown. Estimates from logs are not invoices. OpenCode totals, history, models and top sessions exclude model IDs ending in `-free` or `:free` (case-insensitive), plus the exact ID `free`. Mixed sessions include only non-free model costs. Unknown free tiers without those markers cannot be inferred from the name. If per-model costs are unavailable, the tool reports an error rather than using an unfiltered total.
 
-The menu bar defaults to a compact combined summary: the most consumed subscription quota remaining (percent) plus today's combined cost (USD), identified by icons. Fixed and urgent modes also use compact values; percentages always mean remaining capacity. Full tool names and details remain in the tooltip and app window. In the app settings (gear button), choose combined summary, a fixed tool, or the quota/budget closest to its limit. The urgent mode compares subscription windows, per-tool budgets and the optional global budget; without a limit it falls back to the summary. Data refreshes every five minutes or with the refresh button.
+The menu bar defaults to a compact combined summary: the most consumed subscription quota remaining (percent) plus today's combined cost (USD), identified by icons. Fixed and urgent modes also use compact values; percentages always mean remaining capacity. Full tool names and details remain in the tooltip and app window. In the app settings (gear button), choose combined summary, a fixed tool, or the quota/budget closest to its limit. The urgent mode compares subscription windows, per-tool budgets and the optional global budget; without a limit it falls back to the summary. Data refreshes every five minutes or with the refresh button. Sources collect independently; one that takes over 45 seconds reports an error while healthy sources still update.
 The chart only combines tools with cost data. Subscription percentages are never converted into dollars or added to that chart.
 
 ## Per-tool preferences

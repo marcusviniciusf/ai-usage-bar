@@ -21,7 +21,9 @@ payload = {"updatedAt": "2026-10-23T20:00:00-03:00", "budget": 80,
 common = '''
 @main struct CompatibilityCheck {
     @MainActor static func main() throws {
-        func check(_ condition: Bool) { Swift.precondition(condition) }
+        func check(_ condition: Bool, line: UInt = #line) {
+            if !condition { fatalError("Compatibility check failed at line \\(line)") }
+        }
         UserDefaults.standard.set("pt", forKey: "language")
         let url = URL(fileURLWithPath: CommandLine.arguments[1])
         let data = try Data(contentsOf: url)
@@ -40,9 +42,11 @@ new_test = common + '''
         check(usage.globalBudget?.amount == 80)
         check(usage.total(.today) == 8)
         check(3.0.dollars == "$3")
-        check(3.08.dollars == "$3.1")
+        check(3.08.dollars == "$3,1")
         check(3.0.compactDollars == "$3")
         check(3.08.compactDollars == "$3,1")
+        check(0.04.compactDollars == "Custo abaixo de $0,1")
+        check(0.0.compactDollars == "$0")
         check(76.44.percentValue == "76,4")
         check(usage.indicatorPresentation.text.contains("Codex 70% livre"))
         check(usage.indicatorPresentation.text.contains("OpenCode $8"))
@@ -54,6 +58,27 @@ new_test = common + '''
         check(usage.compactIndicatorParts[1].toolId == "opencode")
         var json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         func read() throws -> Usage { try decoder.decode(Usage.self, from: JSONSerialization.data(withJSONObject: json)) }
+        var cursorPayload = json
+        var cursorTools = cursorPayload["tools"] as! [[String: Any]]
+        var cursorTool = cursorTools[0]
+        cursorTool["id"] = "cursor"
+        cursorTool["name"] = "Cursor"
+        cursorTool["month"] = 15.0
+        cursorTool["billingPeriod"] = ["amount": 44.0, "label": "Current billing cycle"]
+        cursorTools.append(cursorTool)
+        cursorPayload["tools"] = cursorTools
+        let cursorUsage = try decoder.decode(Usage.self, from: JSONSerialization.data(withJSONObject: cursorPayload))
+        check(cursorUsage.tools.first(where: { $0.id == "cursor" })?.billingPeriod?.amount == 44)
+        check(cursorUsage.total(.month) == 20)
+        var roundedPayload = json
+        var roundedTools = roundedPayload["tools"] as! [[String: Any]]
+        roundedTools[0]["quotas"] = [["id": "primary", "label": "5 hours", "usedPercent": 29.4, "resetsAt": 2000000000, "windowMins": 300]]
+        roundedPayload["tools"] = roundedTools
+        let roundedUsage = try decoder.decode(Usage.self, from: JSONSerialization.data(withJSONObject: roundedPayload))
+        check(roundedUsage.compactIndicatorParts[0].text == "71%")
+        UserDefaults.standard.set("en", forKey: "language")
+        check(0.04.compactDollars == "Cost under $0.1")
+        UserDefaults.standard.set("pt", forKey: "language")
         json["indicator"] = ["mode": "urgent"]
         check(try read().indicatorPresentation.text == "OpenCode 80% usado")
         check(try read().compactIndicatorParts.count == 1)
@@ -87,6 +112,37 @@ new_test = common + '''
         UserDefaults.standard.set("pt", forKey: "language")
         check(try read().indicatorPresentation.text == "Codex 70% livre · OpenCode $8")
         check(L10n.translate("Unknown key %@", ["x"]) == "Unknown key x")
+        check(L10n.translate("Refresh timed out after %@ seconds. Try again.", ["90"]) ==
+              "A atualização excedeu 90 segundos. Tente novamente.")
+        let processDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-usage-process-\\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: processDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: processDirectory) }
+        func executable(_ name: String, _ source: String) throws -> URL {
+            let url = processDirectory.appendingPathComponent(name)
+            try source.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+            return url
+        }
+        let noisy = try executable("noisy", "#!/usr/bin/python3\\nimport sys\\nsys.stderr.write('x' * 200000)\\nsys.stdout.write('ready')\\n")
+        check(String(data: try Store.run(noisy.path, timeout: 5), encoding: .utf8) == "ready")
+        let broken = try executable("broken", "#!/usr/bin/python3\\nimport sys\\nprint('collector failed', file=sys.stderr)\\nsys.exit(7)\\n")
+        do {
+            _ = try Store.run(broken.path, timeout: 5)
+            fatalError("Collector exit status should be reported")
+        } catch {
+            check(error.localizedDescription.contains("collector failed"))
+        }
+        let stuck = try executable("stuck", "#!/usr/bin/python3\\nimport subprocess,time\\nsubprocess.Popen(['/bin/sleep','10'])\\ntime.sleep(10)\\n")
+        let started = Date.now
+        do {
+            _ = try Store.run(stuck.path, timeout: 0.2)
+            fatalError("Collector timeout should be reported")
+        } catch {
+            let failure = error as NSError
+            check(failure.domain == "AIUsage.Collector" && failure.code == ETIMEDOUT)
+        }
+        check(Date.now.timeIntervalSince(started) < 3)
         let weekly = Tool.Quota(id: "w", label: "Semanal", usedPercent: 10, resetsAt: nil, windowMins: 10080)
         check(weekly.title == "Semanal" && weekly.shortTitle == "Sem")
         UserDefaults.standard.set("en", forKey: "language")
@@ -95,10 +151,22 @@ new_test = common + '''
         UserDefaults.standard.set("pt", forKey: "language")
         let imminent = Tool.Quota(id: "h", label: "5 horas", usedPercent: 99,
                                   resetsAt: Date.now.timeIntervalSince1970 + 600, windowMins: 300)
-        check(imminent.forecast?.isUrgent == true)
+        check(imminent.forecast?.severity == .critical)
         check(imminent.forecast?.rowText?.contains("Previsão: cota 5h") == true &&
               imminent.forecast?.rowText?.contains("Esgota em ~") == true)
         check(imminent.forecast?.text.contains("antes de renovar") == true)
+        let warning = Tool.Quota(id: "h", label: "5 horas", usedPercent: 49,
+                                 resetsAt: Date.now.timeIntervalSince1970 + 3 * 3600, windowMins: 300)
+        check(warning.forecast?.severity == .warning && (warning.forecast?.secondsToLimit ?? 0) > 3600)
+        let shortFiveHour = Tool.Quota(id: "h", label: "5 horas", usedPercent: 10,
+                                       resetsAt: Date.now.timeIntervalSince1970 + 3 * 3600, windowMins: 300)
+        check(shortFiveHour.forecast?.text.contains("chega a ~25%") == true && shortFiveHour.forecast?.severity == .normal)
+        let shortWeekly = Tool.Quota(id: "w", label: "Semanal", usedPercent: 2,
+                                     resetsAt: Date.now.timeIntervalSince1970 + Double((10080 - 120) * 60), windowMins: 10080)
+        check(shortWeekly.forecast == nil)
+        let establishedWeekly = Tool.Quota(id: "w", label: "Semanal", usedPercent: 25,
+                                           resetsAt: Date.now.timeIntervalSince1970 + 6 * 24 * 3600, windowMins: 10080)
+        check(establishedWeekly.forecast?.severity == .warning)
         json["globalBudget"] = NSNull()
         check(try read().globalBudget == nil)
         json.removeValue(forKey: "globalBudget")

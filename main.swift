@@ -1,4 +1,5 @@
 import Charts
+import Darwin
 import ServiceManagement
 import SwiftUI
 @preconcurrency import UserNotifications
@@ -94,6 +95,20 @@ enum L10n {
             "Updating…": "Atualizando…",
             "Updated %@": "Atualizado %@",
             "Refresh usage": "Atualizar consumo",
+            "Retry": "Tentar novamente",
+            "Usage unavailable": "Consumo indisponível",
+            "Refresh timed out after %@ seconds. Try again.": "A atualização excedeu %@ segundos. Tente novamente.",
+            "Partial usage: %@ unavailable": "Consumo parcial: %@ indisponível",
+            "Some usage data may be out of date. Last update %@.": "Alguns dados podem estar desatualizados. Última atualização %@.",
+            "Cost under $0.1": "Custo abaixo de $0,1",
+            "Notifications are off in macOS settings.": "As notificações estão desativadas nos Ajustes do macOS.",
+            "Open Notification Settings": "Abrir ajustes de notificações",
+            "Send test notification": "Enviar notificação de teste",
+            "Test notification": "Notificação de teste",
+            "Notifications are working.": "As notificações estão funcionando.",
+            "Test notification could not be sent.": "Não foi possível enviar a notificação de teste.",
+            "Expanded": "Expandido",
+            "Collapsed": "Recolhido",
             "Bar indicator": "Indicador da barra",
             "Combined summary": "Resumo combinado",
             "Closest to the limit": "Mais próximo do limite",
@@ -111,7 +126,7 @@ enum L10n {
             "At this pace, the limit is reached in ~%@": "No ritmo atual, limite em ~%@",
             "%@/%@ days × %@ · avg %@/day · full %@": "%@/%@ dias × %@ · média %@/dia · cheio %@",
             "%@/h now": "%@/h agora",
-            "Sum of local costs. Subscription quotas are separate. Cursor's month follows its billing period.": "Soma dos custos locais. Cotas de assinatura ficam separadas. O mês do Cursor segue o período de cobrança.",
+            "Costs use calendar months. Cursor plan usage follows its billing cycle.": "Os custos usam o mês calendário. O plano do Cursor segue o ciclo de cobrança.",
             "Subscription": "Assinatura",
             "%@%% of budget": "%@%% do orçamento",
             "Paid models": "Modelos pagos",
@@ -180,6 +195,20 @@ enum L10n {
             "Updating…": "Actualizando…",
             "Updated %@": "Actualizado %@",
             "Refresh usage": "Actualizar consumo",
+            "Retry": "Reintentar",
+            "Usage unavailable": "Consumo no disponible",
+            "Refresh timed out after %@ seconds. Try again.": "La actualización superó %@ segundos. Inténtalo de nuevo.",
+            "Partial usage: %@ unavailable": "Consumo parcial: %@ no disponible",
+            "Some usage data may be out of date. Last update %@.": "Algunos datos pueden estar desactualizados. Última actualización %@.",
+            "Cost under $0.1": "Coste inferior a $0,1",
+            "Notifications are off in macOS settings.": "Las notificaciones están desactivadas en Ajustes de macOS.",
+            "Open Notification Settings": "Abrir ajustes de notificaciones",
+            "Send test notification": "Enviar notificación de prueba",
+            "Test notification": "Notificación de prueba",
+            "Notifications are working.": "Las notificaciones están funcionando.",
+            "Test notification could not be sent.": "No se pudo enviar la notificación de prueba.",
+            "Expanded": "Expandido",
+            "Collapsed": "Contraído",
             "Bar indicator": "Indicador de la barra",
             "Combined summary": "Resumen combinado",
             "Closest to the limit": "Más cerca del límite",
@@ -197,7 +226,7 @@ enum L10n {
             "At this pace, the limit is reached in ~%@": "Al ritmo actual, el límite llega en ~%@",
             "%@/%@ days × %@ · avg %@/day · full %@": "%@/%@ días × %@ · media %@/día · completo %@",
             "%@/h now": "%@/h ahora",
-            "Sum of local costs. Subscription quotas are separate. Cursor's month follows its billing period.": "Suma de los costes locales. Las cuotas de suscripción van aparte. El mes de Cursor sigue su periodo de facturación.",
+            "Costs use calendar months. Cursor plan usage follows its billing cycle.": "Los costes usan el mes natural. El plan de Cursor sigue su ciclo de facturación.",
             "Subscription": "Suscripción",
             "%@%% of budget": "%@%% del presupuesto",
             "Paid models": "Modelos de pago",
@@ -289,7 +318,7 @@ struct Usage: Codable {
             if tool.error != nil { return IndicatorPart(symbol: tool.symbol, text: "—", toolId: tool.id) }
             if tool.mode == "quota" {
                 let used = tool.quotas?.map(\.usedPercent).max()
-                return IndicatorPart(symbol: tool.symbol, text: used.map { "\(Int(max(0, 100 - $0)))%" } ?? "—", toolId: tool.id)
+                return IndicatorPart(symbol: tool.symbol, text: used.map { "\(Int(min(100, max(0, 100 - $0)).rounded()))%" } ?? "—", toolId: tool.id)
             }
             return IndicatorPart(symbol: tool.symbol, text: tool.today.compactDollars, toolId: tool.id)
         }
@@ -311,7 +340,7 @@ struct Usage: Codable {
             }
             if let globalBudget, !hasPartialCosts { limits.append((total(.today) / globalBudget.amount, "dollarsign.circle", nil)) }
             if let highest = limits.max(by: { $0.0 < $1.0 }) {
-                return [IndicatorPart(symbol: highest.1, text: "\(Int(max(0, 100 - highest.0 * 100)))%", toolId: highest.2)]
+                return [IndicatorPart(symbol: highest.1, text: "\(Int(min(100, max(0, 100 - highest.0 * 100)).rounded()))%", toolId: highest.2)]
             }
         }
         var parts: [IndicatorPart] = []
@@ -401,6 +430,7 @@ struct Tool: Codable, Identifiable {
     let models: [Model]
     let limit: Double?
     let periodEnd: String?
+    let billingPeriod: BillingPeriod?
     let rate: Double?
     let chats: [Chat]?
     var alertsEnabled: Bool?
@@ -409,7 +439,16 @@ struct Tool: Codable, Identifiable {
     let quotas: [Quota]?
 
     struct Budget: Codable { let amount: Double; let period: String }
+    struct BillingPeriod: Codable { let amount: Double; let label: String }
     struct Quota: Codable, Identifiable {
+        struct Forecast {
+            enum Severity: Equatable { case normal, warning, critical }
+            let text: String
+            let rowText: String?
+            let severity: Severity
+            let secondsToLimit: Double?
+        }
+
         let id: String
         let label: String
         let usedPercent: Double
@@ -433,19 +472,25 @@ struct Tool: Codable, Identifiable {
         }
 
         /// Linear projection of the usage so far over the rest of the window.
-        var forecast: (text: String, rowText: String?, isUrgent: Bool)? {
+        var forecast: Forecast? {
             guard let reset = resetsAt, let mins = windowMins, mins > 0, usedPercent > 0, usedPercent < 100 else { return nil }
             let remaining = reset - Date.now.timeIntervalSince1970
             let elapsed = mins * 60 - remaining
-            guard remaining > 0, elapsed >= 600 else { return nil }
+            // A weekly estimate based on a few early hours can turn a short burst into a false alarm.
+            let minimumHistoryMinutes = min(24 * 60, max(60, mins / 7))
+            guard remaining > 0, elapsed >= minimumHistoryMinutes * 60 else { return nil }
             let perSecond = usedPercent / elapsed
             let projected = usedPercent + perSecond * remaining
-            if projected >= 100 {
-                let timeToLimit = duration(hours: (100 - usedPercent) / perSecond / 3600)
-                return (tr("At this pace it runs out in ~%@, before it renews", timeToLimit),
-                        "\(tr("Forecast: %@ quota", shortTitle))\n\(tr("Runs out in ~%@", timeToLimit))", true)
+            if projected > 100 {
+                let secondsToLimit = (100 - usedPercent) / perSecond
+                let timeToLimit = duration(hours: secondsToLimit / 3600)
+                let severity: Forecast.Severity = secondsToLimit <= 3600 ? .critical : .warning
+                return Forecast(text: tr("At this pace it runs out in ~%@, before it renews", timeToLimit),
+                                rowText: "\(tr("Forecast: %@ quota", shortTitle))\n\(tr("Runs out in ~%@", timeToLimit))",
+                                severity: severity, secondsToLimit: secondsToLimit)
             }
-            return (tr("At this pace it reaches ~%@%% when it renews", projected.percentValue), nil, false)
+            return Forecast(text: tr("At this pace it reaches ~%@%% when it renews", projected.percentValue),
+                            rowText: nil, severity: .normal, secondsToLimit: nil)
         }
     }
 
@@ -507,11 +552,30 @@ enum Window: String, CaseIterable, Identifiable {
 
 // MARK: - Store
 
+private final class CollectedData: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = Data()
+
+    func set(_ data: Data) {
+        lock.lock()
+        storage = data
+        lock.unlock()
+    }
+
+    var value: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
 @MainActor
 final class Store: ObservableObject {
+    private static var pendingAlertIDs: Set<String> = []
     @Published var usage: Usage?
     @Published var isLoading = false
     @Published var failure: String?
+    @Published var notificationWarning: String?
     @Published var language: AppLanguage = L10n.preference
 
     private let collector = FileManager.default.homeDirectoryForCurrentUser
@@ -524,7 +588,6 @@ final class Store: ObservableObject {
     init(cachedOnly: Bool = false) {
         usage = try? Self.decoder.decode(Usage.self, from: Data(contentsOf: cache))
         guard !cachedOnly else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -575,13 +638,12 @@ final class Store: ObservableObject {
             if let level = alertLevels.last(where: { ratio >= $0 }) {
                 let day = Date.now.formatted(.iso8601.year().month().day())
                 let key = "alert-global-\(day)-\(budget.amount)"
-                if UserDefaults.standard.double(forKey: key) < level {
-                    UserDefaults.standard.set(level, forKey: key)
+                if UserDefaults.standard.double(forKey: key) < level && !pendingAlertIDs.contains(key) {
                     var body = tr("Today: %@ of %@", usage.total(.today).dollars, budget.amount.dollars)
                     if level < 1, usage.rate > 0.5 {
                         body += "\n" + tr("At %@/h the limit is reached in ~%@", usage.rate.dollars, duration(hours: (budget.amount - usage.total(.today)) / usage.rate))
                     }
-                    notify(title: tr(level >= 1 ? "Global budget · Limit reached" : "Global budget · Close to the limit"), body: body, id: key)
+                    scheduleAlert(title: tr(level >= 1 ? "Global budget · Limit reached" : "Global budget · Close to the limit"), body: body, id: key, level: level)
                 }
             }
         }
@@ -602,32 +664,42 @@ final class Store: ObservableObject {
             for (period, ratio, detail) in checks {
                 guard let level = alertLevels.last(where: { ratio >= $0 }) else { continue }
                 let key = "alert-\(tool.id)-\(period)"
-                guard UserDefaults.standard.double(forKey: key) < level else { continue }
-                UserDefaults.standard.set(level, forKey: key)
+                guard UserDefaults.standard.double(forKey: key) < level, !pendingAlertIDs.contains(key) else { continue }
                 let forecast = level < 1 ? forecasts[period].flatMap { $0 } : nil
-                notify(title: tr(level >= 1 ? "%@ · Limit reached" : "%@ · Close to the limit", tool.name),
-                       body: forecast.map { "\(detail)\n\($0)" } ?? detail, id: key)
+                scheduleAlert(title: tr(level >= 1 ? "%@ · Limit reached" : "%@ · Close to the limit", tool.name),
+                              body: forecast.map { "\(detail)\n\($0)" } ?? detail, id: key, level: level)
             }
         }
     }
 
-    nonisolated static func notify(title: String, body: String, id: String) {
+    private static func scheduleAlert(title: String, body: String, id: String, level: Double) {
+        pendingAlertIDs.insert(id)
+        notify(title: title, body: body, id: id) { delivered in
+            pendingAlertIDs.remove(id)
+            if delivered { UserDefaults.standard.set(level, forKey: id) }
+        }
+    }
+
+    nonisolated static func notify(title: String, body: String, id: String, completion: @escaping @MainActor (Bool) -> Void) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            if granted { UNUserNotificationCenter.current().add(request) }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+                Task { @MainActor in completion(false) }
+                return
+            }
+            UNUserNotificationCenter.current().add(request) { error in
+                Task { @MainActor in completion(error == nil) }
+            }
         }
     }
 
     // Preference changes show up immediately; the collector only persists them (and a failure forces a refresh).
     func setIndicator(mode: String, toolId: String? = nil, toolIds: [String]? = nil) {
-        usage?.indicator = Usage.IndicatorConfig(mode: mode, toolId: toolId, toolIds: toolIds)
-        setPreference(arguments: ["--set-indicator", mode] + (toolId.map { [$0] } ?? []) + (toolIds ?? []), refresh: false) { failure in
-            if let failure { self.failure = failure; self.refresh() }
-        }
+        setPreference(arguments: ["--set-indicator", mode] + (toolId.map { [$0] } ?? []) + (toolIds ?? []))
     }
 
     /// Pins up to two tools in the menu bar; a third pin replaces the oldest. No pins falls back to the summary.
@@ -645,11 +717,7 @@ final class Store: ObservableObject {
 
     /// Hides or shows a tool immediately; enabling needs fresh data, so it also refreshes.
     func setToolEnabled(id: String, enabled: Bool) {
-        if let index = usage?.availableTools?.firstIndex(where: { $0.id == id }) { usage?.availableTools?[index].enabled = enabled }
-        if !enabled { usage?.tools.removeAll { $0.id == id } }
-        setPreference(arguments: ["--set-tool-enabled", id, enabled ? "on" : "off"], refresh: enabled) { failure in
-            if let failure { self.failure = failure; self.refresh() }
-        }
+        setPreference(arguments: ["--set-tool-enabled", id, enabled ? "on" : "off"])
     }
 
     func setLanguage(_ language: AppLanguage) {
@@ -658,37 +726,68 @@ final class Store: ObservableObject {
     }
 
     func setAlerts(tool: Tool, enabled: Bool) {
-        if let index = usage?.tools.firstIndex(where: { $0.id == tool.id }) { usage?.tools[index].alertsEnabled = enabled }
-        setPreference(arguments: ["--set-alerts", tool.id, enabled ? "on" : "off"], refresh: false) { failure in
+        setPreference(arguments: ["--set-alerts", tool.id, enabled ? "on" : "off"]) { failure in
             if let failure { self.failure = failure; self.refresh() }
+            if enabled && failure == nil { self.requestNotificationAuthorization() }
         }
     }
 
     func setBudget(tool: Tool, period: String, amount: Double, completion: @escaping (String?) -> Void) {
-        if let index = usage?.tools.firstIndex(where: { $0.id == tool.id }) {
-            usage?.tools[index].budget = amount > 0 ? Tool.Budget(amount: amount, period: period) : nil
-        }
-        setPreference(arguments: ["--set-tool-budget", tool.id, period, String(amount)], completion: completion)
+        setPreference(arguments: ["--set-tool-budget", tool.id, period, String(amount)], completion: { failure in
+            if failure == nil && amount > 0 { self.requestNotificationAuthorization() }
+            completion(failure)
+        })
     }
 
     func setGlobalBudget(_ amount: Double, completion: @escaping (String?) -> Void) {
-        usage?.globalBudget = amount > 0 ? Tool.Budget(amount: amount, period: "daily") : nil
-        setPreference(arguments: ["--set-budget", String(amount)], completion: completion)
+        setPreference(arguments: ["--set-budget", String(amount)], completion: { failure in
+            if failure == nil && amount > 0 { self.requestNotificationAuthorization() }
+            completion(failure)
+        })
     }
 
-    func setPreference(arguments: [String], refresh: Bool = true, completion: @escaping (String?) -> Void) {
+    private func requestNotificationAuthorization(completion: (@MainActor (Bool) -> Void)? = nil) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { [weak self] settings in
+            let resolve: (Bool) -> Void = { granted in
+                Task { @MainActor in
+                    self?.notificationWarning = granted ? nil : tr("Notifications are off in macOS settings.")
+                    completion?(granted)
+                }
+            }
+            switch settings.authorizationStatus {
+            case .authorized, .provisional: resolve(true)
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in resolve(granted) }
+            default: resolve(false)
+            }
+        }
+    }
+
+    func sendTestNotification() {
+        requestNotificationAuthorization { granted in
+            guard granted else { return }
+            Self.notify(title: tr("Test notification"), body: tr("Notifications are working."), id: "test-\(UUID().uuidString)") { delivered in
+                if !delivered { self.notificationWarning = tr("Test notification could not be sent.") }
+            }
+        }
+    }
+
+    func setPreference(arguments: [String], refresh: Bool = true, completion: @escaping (String?) -> Void = { _ in }) {
         let collector = collector
         Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
             process.arguments = [collector] + arguments
             process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
+            let errorPipe = Pipe()
+            process.standardError = errorPipe
             let failure: String?
             do {
                 try process.run()
                 process.waitUntilExit()
-                failure = process.terminationStatus == 0 ? nil : tr("Could not save the setting.")
+                let errorText = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                failure = process.terminationStatus == 0 ? nil : (errorText.flatMap { $0.isEmpty ? nil : $0 } ?? tr("Could not save the setting."))
             } catch { failure = error.localizedDescription }
             await MainActor.run {
                 completion(failure)
@@ -697,16 +796,51 @@ final class Store: ObservableObject {
         }
     }
 
-    nonisolated private static func run(_ path: String) throws -> Data {
+    nonisolated static func run(_ path: String, timeout: TimeInterval = 90) throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = [path]
+        process.arguments = ["-c", "import os,sys; os.execv(sys.executable, [sys.executable, sys.argv[1]])", path]
         let pipe = Pipe()
+        let errorPipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
+        process.standardError = errorPipe
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        let output = CollectedData()
+        let errors = CollectedData()
+        let readers = DispatchGroup()
+        readers.enter()
+        DispatchQueue.global(qos: .utility).async {
+            output.set(pipe.fileHandleForReading.readDataToEndOfFile())
+            readers.leave()
+        }
+        readers.enter()
+        DispatchQueue.global(qos: .utility).async {
+            errors.set(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            readers.leave()
+        }
+
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            let processGroup = -process.processIdentifier
+            _ = kill(processGroup, SIGTERM)
+            if exited.wait(timeout: .now() + 2) == .timedOut {
+                _ = kill(processGroup, SIGKILL)
+                _ = exited.wait(timeout: .now() + 2)
+            }
+            readers.wait()
+            let message = tr("Refresh timed out after %@ seconds. Try again.", String(Int(timeout.rounded(.up))))
+            throw NSError(domain: "AIUsage.Collector", code: Int(ETIMEDOUT),
+                          userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        readers.wait()
+        let data = output.value
+        guard process.terminationStatus == 0 else {
+            let errorText = String(data: errors.value, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = errorText.flatMap { $0.isEmpty ? nil : $0 } ?? "Collector exited with status \(process.terminationStatus)."
+            throw NSError(domain: "AIUsage.Collector", code: Int(process.terminationStatus),
+                          userInfo: [NSLocalizedDescriptionKey: message])
+        }
         return data
     }
 }
@@ -714,9 +848,16 @@ final class Store: ObservableObject {
 // MARK: - Formatting & theme
 
 extension Double {
-    var compactDollars: String { "$" + formatted(.number.precision(.fractionLength(0...1)).locale(Locale(identifier: "pt_BR"))) }
-    var dollars: String { formatted(.currency(code: "USD").precision(.fractionLength(0...1)).locale(Locale(identifier: "en_US"))) }
-    var shortDollars: String { formatted(.currency(code: "USD").precision(.fractionLength(0...1)).locale(Locale(identifier: "en_US"))) }
+    private var isPositiveBelowDisplayPrecision: Bool { self > 0 && self < 0.05 }
+    var compactDollars: String {
+        if isPositiveBelowDisplayPrecision { return tr("Cost under $0.1") }
+        return "$" + formatted(.number.precision(.fractionLength(0...1)).locale(L10n.locale))
+    }
+    var dollars: String {
+        if isPositiveBelowDisplayPrecision { return tr("Cost under $0.1") }
+        return "$" + formatted(.number.precision(.fractionLength(0...1)).locale(L10n.locale))
+    }
+    var shortDollars: String { dollars }
     var percentValue: String { formatted(.number.precision(.fractionLength(0...1)).locale(L10n.locale)) }
 }
 
@@ -736,6 +877,7 @@ enum Theme {
     static let secondary = Color.white.opacity(0.70)
     static let tertiary = Color.white.opacity(0.60)
     static let good = Color(hex: 0x4BE3A4)
+    static let warning = Color(hex: 0xF0B44D)
     static let bad = Color(hex: 0xFF5C6C)
 }
 
@@ -852,6 +994,7 @@ struct FooterButton: View {
 
 struct ContentView: View {
     @EnvironmentObject var store: Store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var window: Window = .today
     @State private var expanded: String?
     @State private var editingTool: Tool?
@@ -878,8 +1021,15 @@ struct ContentView: View {
                          : tr("No tools detected. Open Codex or OpenCode to get started."))
                         .font(.system(size: 12)).foregroundStyle(Theme.secondary).padding(.vertical, 24)
                 }
-            } else {
+            } else if store.isLoading {
                 ProgressView().controlSize(.small).tint(.white).frame(height: 120)
+            } else {
+                VStack(spacing: 8) {
+                    Text(tr("Usage unavailable")).font(.system(size: 12, weight: .medium))
+                    Text(store.failure ?? tr("Collector returned unreadable output"))
+                        .font(.system(size: 10.5)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+                    Button(tr("Retry"), action: store.refresh).buttonStyle(.borderless)
+                }.frame(maxWidth: .infinity).padding(.vertical, 22)
             }
         }
         .padding(12)
@@ -909,6 +1059,8 @@ struct ContentView: View {
                         Text(failure).foregroundStyle(Theme.bad)
                     } else if let launchSettingError {
                         Text(launchSettingError).foregroundStyle(Theme.bad)
+                    } else if let notificationWarning = store.notificationWarning {
+                        Text(notificationWarning).foregroundStyle(Theme.bad)
                     } else if store.isLoading {
                         Text(tr("Updating…"))
                     } else if let updated = store.usage?.updatedAt {
@@ -924,8 +1076,8 @@ struct ContentView: View {
                     .foregroundStyle(Theme.secondary)
                     .frame(width: 24, height: 24)
                     .background(Circle().fill(Color.white.opacity(0.06)))
-                    .rotationEffect(.degrees(store.isLoading ? 360 : 0))
-                    .animation(store.isLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default,
+                    .rotationEffect(.degrees(store.isLoading && !reduceMotion ? 360 : 0))
+                    .animation(store.isLoading && !reduceMotion ? .linear(duration: 1).repeatForever(autoreverses: false) : nil,
                                value: store.isLoading)
             }
             .buttonStyle(.plain)
@@ -967,6 +1119,12 @@ struct ContentView: View {
             Divider()
             Button(tr("Daily global budget…")) { editingGlobalBudget = true }
             Toggle(tr("Launch at login"), isOn: Binding(get: { launchAtLogin }, set: { _ in toggleLaunchAtLogin() }))
+            Button(tr("Send test notification"), action: store.sendTestNotification)
+            if store.notificationWarning != nil {
+                Button(tr("Open Notification Settings")) {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
+                }
+            }
             Menu(tr("Language")) {
                 ForEach(AppLanguage.allCases) { language in
                     Toggle(language == .system ? tr("Device language") : language.nativeName,
@@ -1027,7 +1185,9 @@ struct ContentView: View {
                 }
             }
             if usage.hasPartialCosts {
-                Text(tr("Partial usage: a tool is unavailable.")).font(.system(size: 10.5)).foregroundStyle(Theme.bad)
+                let unavailable = usage.tools.filter { $0.mode != "quota" && $0.error != nil }.map(\.name)
+                Text(tr("Partial usage: %@ unavailable", unavailable.joined(separator: ", ")))
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.bad)
             } else if allowed > 0 {
                 UsageBar(fraction: ratio, color: isWarm ? Theme.bad : Theme.good)
                 HStack {
@@ -1052,7 +1212,7 @@ struct ContentView: View {
                     .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.secondary)
             }
         }
-        .help(tr("Sum of local costs. Subscription quotas are separate. Cursor's month follows its billing period."))
+        .help(tr("Costs use calendar months. Cursor plan usage follows its billing cycle."))
     }
 
     // MARK: Tools
@@ -1070,7 +1230,7 @@ struct ContentView: View {
         let isExpanded = expanded == tool.id
         return VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.snappy(duration: 0.2)) { expanded = isExpanded ? nil : tool.id }
+                withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { expanded = isExpanded ? nil : tool.id }
             } label: {
                 HStack(spacing: 10) {
                     ToolAppIcon(toolId: tool.id, fallback: tool.symbol, size: 24).foregroundStyle(tool.color)
@@ -1088,6 +1248,7 @@ struct ContentView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityValue(tr(isExpanded ? "Expanded" : "Collapsed"))
 
             if isExpanded {
                 details(tool)
@@ -1102,14 +1263,28 @@ struct ContentView: View {
         if let error = tool.error {
             Text(error).font(.system(size: 10.5)).foregroundStyle(Theme.bad).lineLimit(1)
         } else if tool.mode == "quota" {
-            if let urgent = tool.quotas?.compactMap({ $0.forecast }).first(where: { $0.isUrgent }), let rowText = urgent.rowText {
-                Text(rowText).font(.system(size: 10.5)).foregroundStyle(Theme.bad)
+            if let risk = mostAtRiskForecast(tool), let rowText = risk.rowText {
+                Text(rowText).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(forecastColor(risk))
                     .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(tr("Subscription")).font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
             }
         } else {
             Text(costSubtitle(tool)).font(.system(size: 10.5)).foregroundStyle(Theme.secondary).lineLimit(1)
+        }
+    }
+
+    private func mostAtRiskForecast(_ tool: Tool) -> Tool.Quota.Forecast? {
+        tool.quotas?.compactMap(\.forecast)
+            .filter { $0.severity != .normal }
+            .min { ($0.secondsToLimit ?? .infinity) < ($1.secondsToLimit ?? .infinity) }
+    }
+
+    private func forecastColor(_ forecast: Tool.Quota.Forecast) -> Color {
+        switch forecast.severity {
+        case .normal: Theme.secondary
+        case .warning: Theme.warning
+        case .critical: Theme.bad
         }
     }
 
@@ -1153,7 +1328,11 @@ struct ContentView: View {
     @ViewBuilder
     private func details(_ tool: Tool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if tool.mode == "quota" {
+            if let error = tool.error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.bad).fixedSize(horizontal: false, vertical: true)
+                Button(tr("Retry"), action: store.refresh).buttonStyle(.borderless)
+            } else if tool.mode == "quota" {
                 ForEach(tool.quotas ?? []) { quota in quotaRow(quota, tool: tool) }
             } else if tool.error == nil {
                 costDetails(tool)
@@ -1173,12 +1352,12 @@ struct ContentView: View {
             if let reset = quota.resetsAt {
                 let date = Date(timeIntervalSince1970: reset)
                 Text(tr("Renews %@ · %@", date.relativeText, date.weekdayTimeText))
-                    .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
             }
             if let forecast = quota.forecast {
-                Label(forecast.text, systemImage: forecast.isUrgent ? "exclamationmark.triangle.fill" : "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(forecast.isUrgent ? Theme.bad : Theme.secondary)
+                Label(forecast.text, systemImage: forecast.severity == .normal ? "chart.line.uptrend.xyaxis" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(forecastColor(forecast))
             }
         }
     }
@@ -1194,9 +1373,10 @@ struct ContentView: View {
             }
         }
         if tool.id == "cursor", let limit = tool.limit, limit > 0 {
+            let planAmount = tool.billingPeriod?.amount ?? tool.month
             VStack(alignment: .leading, spacing: 4) {
-                UsageBar(fraction: tool.month / limit, color: tool.color)
-                Text(tool.periodEnd.map { tr("Plan %@ of %@ · renews %@", tool.month.shortDollars, limit.shortDollars, $0) } ?? tr("Plan %@ of %@", tool.month.shortDollars, limit.shortDollars))
+                UsageBar(fraction: planAmount / limit, color: tool.color)
+                Text(tool.periodEnd.map { tr("Plan %@ of %@ · renews %@", planAmount.shortDollars, limit.shortDollars, $0) } ?? tr("Plan %@ of %@", planAmount.shortDollars, limit.shortDollars))
                     .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
             }
         }
@@ -1396,6 +1576,12 @@ struct MenuBarContent: View {
     var body: some View {
         let presentation = store.usage?.indicatorPresentation
         let parts = store.usage?.compactIndicatorParts ?? [Usage.IndicatorPart(symbol: "sparkles", text: "—")]
+        let unavailable = store.usage?.tools.filter { $0.error != nil }.map(\.name) ?? []
+        let status = [
+            unavailable.isEmpty ? nil : tr("Partial usage: %@ unavailable", unavailable.joined(separator: ", ")),
+            store.failure != nil ? store.usage.map { tr("Some usage data may be out of date. Last update %@.", $0.updatedAt.relativeText) } : nil
+        ].compactMap { $0 }
+        let accessibilityText = [presentation?.text ?? "AI Usage"] + status
         HStack(spacing: 6) {
             ForEach(parts.indices, id: \.self) { index in
                 HStack(spacing: 3) {
@@ -1405,8 +1591,8 @@ struct MenuBarContent: View {
             }
             if presentation?.warning == true { Image(systemName: "exclamationmark.circle.fill").font(.system(size: 9)) }
         }
-        .help((presentation?.text ?? "AI Usage") + "\n" + tr("Percent: remaining quota or budget. Values: estimated cost today in USD."))
-        .accessibilityLabel(presentation?.text ?? "AI Usage")
+        .help((accessibilityText + [tr("Percent: remaining quota or budget. Values: estimated cost today in USD.")]).joined(separator: "\n"))
+        .accessibilityLabel(accessibilityText.joined(separator: ". "))
     }
 }
 

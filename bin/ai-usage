@@ -5,9 +5,12 @@ Cursor comes from ~/.local/bin/cursor-spend (dashboard API); Claude and OpenCode
 Read by the AI Usage menu bar app. Prints one JSON object to stdout.
 """
 import json
+import fcntl
 import math
 import os
+import tempfile
 import selectors
+import signal
 import shutil
 import subprocess
 import sys
@@ -19,14 +22,20 @@ from importlib.machinery import SourceFileLoader
 
 HOME = os.path.expanduser("~")
 CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "ai-usage", "config.json")
+DATA_HOME = os.environ.get("XDG_DATA_HOME", os.path.join(HOME, ".local/share"))
 
 
 def configuration():
     try:
         with open(CONFIG) as f:
-            return json.load(f)
-    except (OSError, ValueError):
+            config = json.load(f)
+        if not isinstance(config, dict):
+            raise ValueError("Configuration must contain a JSON object")
+        return config
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as err:
+        raise RuntimeError(f"Cannot read {CONFIG}. Fix or restore this file before changing preferences: {err}") from err
 
 
 def tool_budget(tool_id):
@@ -71,11 +80,30 @@ def output_payload(tools, available=None):
             "tools": tools}
 
 
-def save_configuration(config):
+def update_configuration(update):
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-    with open(CONFIG, "w") as f:
-        json.dump(config, f, indent=2)
-        f.write("\n")
+    lock_path = CONFIG + ".lock"
+    with open(lock_path, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        config = configuration()
+        update(config)
+        fd, tmp = tempfile.mkstemp(prefix=".config-", dir=os.path.dirname(CONFIG))
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(config, f, indent=2)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, CONFIG)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _tool_preference(config, tool_id):
+    return config.setdefault("tools", {}).setdefault(tool_id, {})
 
 
 HISTORY_DAYS = 14
@@ -93,6 +121,14 @@ def history(by_day):
     return [{"date": (history_start + timedelta(days=i)).isoformat(),
              "cost": round(by_day.get(history_start + timedelta(days=i), 0.0), 4)}
             for i in range(HISTORY_DAYS)]
+
+
+def period_totals(by_day):
+    return {
+        "today": by_day.get(today, 0.0),
+        "week": sum(cost for day, cost in by_day.items() if day >= week_start),
+        "month": sum(cost for day, cost in by_day.items() if day >= month_start),
+    }
 
 
 def top_models(by_model):
@@ -146,7 +182,7 @@ def cursor():
     if not token or not team or not user:
         raise RuntimeError("Not signed in to Cursor")
     period_ms = period_start or int(datetime.combine(month_start, datetime.min.time()).timestamp() * 1000)
-    period_label = datetime.fromtimestamp(period_ms / 1000, tz=timezone.utc).strftime("%b %-d")
+    period_label = datetime.fromtimestamp(period_ms / 1000).strftime("%b %-d")
     start = min(datetime.fromtimestamp(period_ms / 1000).date(), history_start, week_start)
     start_ms = int(datetime.combine(start, datetime.min.time()).timestamp() * 1000)
     try:
@@ -156,7 +192,7 @@ def cursor():
 
     by_day, by_model = defaultdict(float), defaultdict(float)
     by_chat = defaultdict(lambda: [0.0, ""])
-    period_total = last_hour = 0.0
+    billing_total = last_hour = 0.0
     hour_ago_ms = (time.time() - 3600) * 1000
     for e in events:
         ts = int(e.get("timestamp") or 0)
@@ -164,7 +200,7 @@ def cursor():
         cost = spend.dollars(e)
         by_day[day] += cost
         if ts >= period_ms:
-            period_total += cost
+            billing_total += cost
         if ts >= hour_ago_ms:
             last_hour += cost
         if day == today:
@@ -176,14 +212,13 @@ def cursor():
     top_chats = sorted(by_chat.items(), key=lambda kv: -kv[1][0])[:3]
     names = spend.titles([cid for cid, _ in top_chats])
     return {
-        "today": by_day.get(today, 0.0),
-        "week": sum(c for d, c in by_day.items() if d >= week_start),
-        "month": period_total,
-        "monthLabel": f"Billing period since {period_label}",
+        **period_totals(by_day),
+        "monthLabel": f"Calendar month since {month_start.strftime('%b %-d')}",
+        "billingPeriod": {"amount": billing_total, "label": f"Billing period since {period_label}"},
         "daily": history(by_day),
         "models": top_models(by_model),
         "limit": cursor_limit(spend, period_start),
-        "periodEnd": datetime.fromtimestamp(period_end / 1000, tz=timezone.utc).date().isoformat() if period_end else None,
+        "periodEnd": datetime.fromtimestamp(period_end / 1000).date().isoformat() if period_end else None,
         "rate": last_hour,
         "chats": [{"name": names[cid] if cid != "none" else "No chat (inline / tab)", "cost": round(c, 4), "model": m}
                   for cid, (c, m) in top_chats if c > 0],
@@ -227,16 +262,26 @@ def claude_title(project_path, session_id):
 
 def opencode_titles(ids):
     import sqlite3
+    path = os.path.join(DATA_HOME, "opencode/opencode.db")
+    titles = {}
+    db = None
     try:
-        db = sqlite3.connect(f"file:{os.path.join(HOME, '.local/share/opencode/opencode.db')}?mode=ro", uri=True)
+        db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        available = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         marks = ",".join("?" * len(ids))
-        titles = {}
         for table in ("session", "session_v2"):  # session_v2 is current, session holds older rows
-            titles.update({k: v for k, v in db.execute(f"SELECT id, title FROM {table} WHERE id IN ({marks})", ids) if v})
-        db.close()
-        return titles
+            if table not in available:
+                continue
+            try:
+                titles.update({k: v for k, v in db.execute(f"SELECT id, title FROM {table} WHERE id IN ({marks})", ids) if v})
+            except sqlite3.Error:
+                continue
     except sqlite3.Error:
-        return {}
+        pass
+    finally:
+        if db is not None:
+            db.close()
+    return titles
 
 
 def paid_breakdowns(row):
@@ -289,9 +334,7 @@ def ccusage(agent):
             for m in models:
                 by_model[m["modelName"]] += m.get("cost", 0)
     return {
-        "today": by_day.get(today, 0.0),
-        "week": sum(c for d, c in by_day.items() if d >= week_start),
-        "month": sum(c for d, c in by_day.items() if d >= month_start),
+        **period_totals(by_day),
         "monthLabel": f"Since {month_start.strftime('%b %-d')}",
         "daily": history(by_day),
         "models": top_models(by_model),
@@ -302,6 +345,7 @@ def ccusage(agent):
 
 SOURCES = [("cursor", "Cursor", cursor), ("claude", "Claude Code", lambda: ccusage("claude")),
            ("opencode", "OpenCode", lambda: ccusage("opencode"))]
+COLLECTOR_TIMEOUT_SECONDS = 45
 
 
 def codex_binary():
@@ -403,16 +447,60 @@ def collect(source):
                 "mode": "quota" if tool_id == "codex" else "cost", "today": 0, "week": 0, "month": 0, "monthLabel": "", "daily": [], "models": []}
 
 
+def stop_process_group(process):
+    """Stop a timed-out collector and any CLI processes it started."""
+    for sig, grace in ((signal.SIGTERM, 2), (signal.SIGKILL, 2)):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+        try:
+            return process.communicate(timeout=grace)
+        except subprocess.TimeoutExpired:
+            continue
+    return process.communicate()
+
+
+def collect_isolated(source, timeout=COLLECTOR_TIMEOUT_SECONDS, command=None):
+    """Run one source separately so a stuck provider cannot block healthy results."""
+    tool_id, name, _ = source
+    command = command or [sys.executable, os.path.abspath(__file__), "--collect-tool", tool_id]
+    try:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, env=ENV, start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            stop_process_group(process)
+            raise TimeoutError(f"{name} refresh timed out after {timeout} seconds. Try again.")
+        if process.returncode:
+            raise RuntimeError(stderr.strip() or f"{name} collector exited with status {process.returncode}.")
+        result = json.loads(stdout)
+        if result.get("id") != tool_id:
+            raise ValueError("Collector returned data for the wrong tool.")
+        return result
+    except (OSError, RuntimeError, TimeoutError, ValueError) as err:
+        return {"id": tool_id, "name": name, "error": str(err) or type(err).__name__,
+                "mode": "quota" if tool_id == "codex" else "cost", "today": 0, "week": 0, "month": 0,
+                "monthLabel": "", "daily": [], "models": []}
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--collect-tool":
+        source = next((s for s in detected_sources() if s[0] == sys.argv[2]), None)
+        if source is None:
+            raise ValueError(f"Tool not detected: {sys.argv[2]}")
+        json.dump(collect(source), sys.stdout)
+        return 0
     if len(sys.argv) == 3 and sys.argv[1] == "--set-budget":
         amount = float(sys.argv[2])
         if not math.isfinite(amount) or amount < 0:
             raise ValueError("Global daily budget must be finite and non-negative")
-        config = configuration()
-        config["globalBudget"] = {"amount": amount, "period": "daily"} if amount else None
-        if amount:
-            config["dailyBudget"] = amount  # Preserve the old CLI/config contract.
-        save_configuration(config)
+        def update(config):
+            config["globalBudget"] = {"amount": amount, "period": "daily"} if amount else None
+            if amount:
+                config["dailyBudget"] = amount  # Preserve the old CLI/config contract.
+        update_configuration(update)
         print("Global daily budget saved")
         return 0
     if len(sys.argv) >= 3 and sys.argv[1] == "--set-indicator":
@@ -423,22 +511,18 @@ def main():
                  or (mode == "pinned" and 1 <= len(ids) <= 2 and len(set(ids)) == len(ids) and set(ids) <= known))
         if not valid:
             raise ValueError("Usage: ai-usage --set-indicator summary|urgent|fixed TOOL|pinned TOOL [TOOL]")
-        config = configuration()
-        config["indicator"] = {"mode": mode, "toolId": ids[0] if mode == "fixed" else None}
-        if mode == "pinned":
-            config["indicator"]["toolIds"] = ids
-        save_configuration(config)
+        def update(config):
+            config["indicator"] = {"mode": mode, "toolId": ids[0] if mode == "fixed" else None}
+            if mode == "pinned":
+                config["indicator"]["toolIds"] = ids
+        update_configuration(update)
         print("Indicator preference saved")
         return 0
     if len(sys.argv) == 4 and sys.argv[1] == "--set-alerts":
         tool_id, value = sys.argv[2:]
         if tool_id not in {"codex", *(s[0] for s in SOURCES)} or value not in ("on", "off"):
             raise ValueError("Usage: ai-usage --set-alerts TOOL on|off")
-        config = configuration()
-        config.setdefault("tools", {}).setdefault(tool_id, {})["alertsEnabled"] = value == "on"
-        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-        with open(CONFIG, "w") as f:
-            json.dump(config, f, indent=2)
+        update_configuration(lambda config: _tool_preference(config, tool_id).__setitem__("alertsEnabled", value == "on"))
         print("Alert preference saved")
         return 0
     if len(sys.argv) == 5 and sys.argv[1] == "--set-tool-budget":
@@ -446,30 +530,29 @@ def main():
         amount = float(value)
         if tool_id not in {s[0] for s in SOURCES} or period not in ("daily", "monthly") or not math.isfinite(amount) or amount < 0:
             raise ValueError("Use a supported cost tool, daily|monthly and a non-negative amount (0 removes the budget)")
-        config = configuration()
-        config.setdefault("tools", {}).setdefault(tool_id, {})["budget"] = {"amount": amount, "period": period} if amount else None
-        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-        with open(CONFIG, "w") as f:
-            json.dump(config, f, indent=2)
+        update_configuration(lambda config: _tool_preference(config, tool_id).__setitem__(
+            "budget", {"amount": amount, "period": period} if amount else None))
         print("Tool budget saved")
         return 0
     if len(sys.argv) == 4 and sys.argv[1] == "--set-tool-enabled":
         tool_id, value = sys.argv[2:]
         if tool_id not in {"codex", *(s[0] for s in SOURCES)} or value not in ("on", "off"):
             raise ValueError("Usage: ai-usage --set-tool-enabled TOOL on|off")
-        config = configuration()
-        config.setdefault("tools", {}).setdefault(tool_id, {})["enabled"] = value == "on"
-        save_configuration(config)
+        update_configuration(lambda config: _tool_preference(config, tool_id).__setitem__("enabled", value == "on"))
         print("Tool filter saved")
         return 0
     if len(sys.argv) > 1:
         raise ValueError("Unknown command")
     detected = detected_sources()
     with ThreadPoolExecutor() as pool:
-        tools = list(pool.map(collect, [s for s in detected if tool_enabled(s[0])]))
+        tools = list(pool.map(collect_isolated, [s for s in detected if tool_enabled(s[0])]))
     json.dump(output_payload(tools, detected), sys.stdout)
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (OSError, RuntimeError, ValueError) as err:
+        print(f"ai-usage: {err}", file=sys.stderr)
+        sys.exit(1)

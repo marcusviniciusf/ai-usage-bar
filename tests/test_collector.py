@@ -3,10 +3,13 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 
@@ -28,6 +31,11 @@ class CollectorTests(unittest.TestCase):
                 self.assertGreater(collector.output_payload([])["budget"], 0)
             with patch.dict(os.environ, {"AI_USAGE_DAILY_BUDGET": "90"}):
                 self.assertEqual(collector.global_budget()["amount"], 90)
+
+    def test_period_totals_use_calendar_month_and_keep_today_separate(self):
+        totals = collector.period_totals({collector.month_start - collector.timedelta(days=1): 90,
+                                          collector.today: 4})
+        self.assertEqual(totals, {"today": 4, "week": 4, "month": 4})
 
     def test_legacy_cli_and_indicator_preferences_preserve_existing_config(self):
         with tempfile.TemporaryDirectory() as config:
@@ -51,6 +59,35 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(run("--set-budget", "0").returncode, 0)
             self.assertIsNone(json.loads(path.read_text())["globalBudget"])
             self.assertNotEqual(run("--set-indicator", "fixed", "missing").returncode, 0)
+
+    def test_concurrent_preference_writes_preserve_both_updates(self):
+        with tempfile.TemporaryDirectory() as config:
+            env = {**os.environ, "XDG_CONFIG_HOME": config}
+            def run(args):
+                return subprocess.run([sys.executable, str(COLLECTOR), *args], env=env, capture_output=True, text=True)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(run, [
+                    ("--set-tool-budget", "opencode", "daily", "12"),
+                    ("--set-alerts", "codex", "off"),
+                ]))
+            self.assertEqual([r.returncode for r in results], [0, 0])
+            saved = json.loads(Path(config, "ai-usage/config.json").read_text())
+            self.assertEqual(saved["tools"]["opencode"]["budget"]["amount"], 12)
+            self.assertFalse(saved["tools"]["codex"]["alertsEnabled"])
+
+    def test_invalid_configuration_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as config:
+            env = {**os.environ, "XDG_CONFIG_HOME": config}
+            path = Path(config, "ai-usage/config.json")
+            path.parent.mkdir()
+            original = b"{not valid json"
+            path.write_bytes(original)
+            result = subprocess.run([sys.executable, str(COLLECTOR), "--set-alerts", "codex", "off"],
+                                    env=env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"Fix or restore this file", result.stderr)
+            self.assertNotIn(b"Traceback", result.stderr)
+            self.assertEqual(path.read_bytes(), original)
 
     def test_opencode_excludes_free_costs_from_all_windows_and_history(self):
         days = [
@@ -82,6 +119,37 @@ class CollectorTests(unittest.TestCase):
             result = collector.top_chats("opencode")
         self.assertEqual([(s["name"], s["cost"], s["model"]) for s in result],
                          [("Paid", 3, "paid-model"), ("Mixed", 2, "paid-small")])
+
+    def test_opencode_titles_support_each_schema_and_xdg_path(self):
+        with tempfile.TemporaryDirectory() as data_home:
+            db_path = Path(data_home, "opencode/opencode.db")
+            db_path.parent.mkdir(parents=True)
+            db = sqlite3.connect(db_path)
+            db.execute("CREATE TABLE session_v2 (id TEXT, title TEXT)")
+            db.execute("INSERT INTO session_v2 VALUES ('new', 'New schema')")
+            db.commit()
+            db.close()
+            with patch.object(collector, "DATA_HOME", data_home):
+                self.assertEqual(collector.opencode_titles(["new"]), {"new": "New schema"})
+            db = sqlite3.connect(db_path)
+            db.execute("CREATE TABLE session (id TEXT, title TEXT)")
+            db.execute("INSERT INTO session VALUES ('old', 'Old schema')")
+            db.commit()
+            db.close()
+            with patch.object(collector, "DATA_HOME", data_home):
+                self.assertEqual(collector.opencode_titles(["new", "old"]), {"new": "New schema", "old": "Old schema"})
+            db = sqlite3.connect(db_path)
+            db.execute("DROP TABLE session_v2")
+            db.commit()
+            db.close()
+            with patch.object(collector, "DATA_HOME", data_home):
+                self.assertEqual(collector.opencode_titles(["old"]), {"old": "Old schema"})
+            db = sqlite3.connect(db_path)
+            db.execute("DROP TABLE session")
+            db.commit()
+            db.close()
+            with patch.object(collector, "DATA_HOME", data_home):
+                self.assertEqual(collector.opencode_titles(["old"]), {})
 
     def test_free_only_usage_is_zero_and_missing_breakdown_is_an_error(self):
         self.assertEqual(collector.paid_breakdowns({"totalCost": 99, "modelBreakdowns": [
@@ -190,6 +258,33 @@ for line in sys.stdin:
         result = collector.collect(("codex", "Codex", fail))
         self.assertEqual(result["error"], "Sign in required")
         self.assertEqual(result["mode"], "quota")
+
+    def test_isolated_source_timeout_does_not_block_healthy_source(self):
+        slow_source = ("slow", "Slow source", None)
+        healthy_source = ("healthy", "Healthy source", None)
+        slow_command = [sys.executable, "-c",
+                        "import subprocess,time; subprocess.Popen(['/bin/sleep','10']); time.sleep(10)"]
+        healthy_command = [sys.executable, "-c",
+                           "import json; print(json.dumps({'id':'healthy','today':3}))"]
+        started = time.monotonic()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            slow = pool.submit(collector.collect_isolated, slow_source, 0.1, slow_command)
+            healthy = pool.submit(collector.collect_isolated, healthy_source, 2, healthy_command)
+            slow_result, healthy_result = slow.result(), healthy.result()
+        self.assertIn("timed out", slow_result["error"].lower())
+        self.assertEqual(healthy_result["today"], 3)
+        self.assertLess(time.monotonic() - started, 3)
+
+    def test_isolated_source_decodes_success_and_reports_exit_status(self):
+        source = ("test", "Test source", None)
+        success = collector.collect_isolated(
+            source, timeout=2,
+            command=[sys.executable, "-c", "import json; print(json.dumps({'id':'test','today':3}))"])
+        self.assertEqual(success["today"], 3)
+        failed = collector.collect_isolated(
+            source, timeout=2,
+            command=[sys.executable, "-c", "import sys; print('collector failed',file=sys.stderr); sys.exit(7)"])
+        self.assertEqual(failed["error"], "collector failed")
 
 
 if __name__ == "__main__":

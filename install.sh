@@ -8,11 +8,13 @@ if ! xcrun --find swiftc >/dev/null 2>&1; then
   exit 1
 fi
 
-# Symlinks, so edits in this repo apply without reinstalling. Rebuild only after main.swift changes.
+# Keep collectors outside TCC-protected folders such as Documents. Re-run install.sh after edits.
 mkdir -p "$HOME/.local/bin"
 chmod +x bin/ai-usage bin/cursor-spend
-ln -sf "$PWD/bin/ai-usage" "$HOME/.local/bin/ai-usage"
-ln -sf "$PWD/bin/cursor-spend" "$HOME/.local/bin/cursor-spend"
+rm -f "$HOME/.local/bin/ai-usage" "$HOME/.local/bin/cursor-spend"
+cp bin/ai-usage "$HOME/.local/bin/ai-usage"
+cp bin/cursor-spend "$HOME/.local/bin/cursor-spend"
+chmod 755 "$HOME/.local/bin/ai-usage" "$HOME/.local/bin/cursor-spend"
 
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v ccusage >/dev/null; then

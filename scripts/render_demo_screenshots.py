@@ -33,7 +33,8 @@ def demo_payload(now: datetime) -> dict:
             {"name": "Demo: implement settings", "cost": 1.82, "model": "demo/model-a"},
             {"name": "Demo: polish panel", "cost": 1.28, "model": "demo/model-b"},
         ],
-        "limit": None, "periodEnd": None, "rate": 0.84,
+        # OpenCode has no safely filterable active-block rate yet.
+        "limit": None, "periodEnd": None, "rate": 0,
         "alertsEnabled": True, "mode": "cost", "budget": None, "quotas": None,
     }
     codex = {

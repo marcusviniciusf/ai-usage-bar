@@ -2,7 +2,7 @@
   "project": "ai-usage-bar",
   "description": "",
   "prefix": "AUB",
-  "updated_at": "2026-10-24",
+  "updated_at": "2026-10-26",
   "tasks": [
     {
       "id": "AUB-001",
@@ -78,13 +78,13 @@
     },
     {
       "id": "AUB-007",
-      "title": "Clarify Codex quota display and verify settings",
-      "description": "Review each visible settings action and improve Codex quota row labels and spacing.",
+      "title": "Calibrate Codex quota warning severity and readability",
+      "description": "Keep the forecast accurate while matching color to urgency: use red only for near-term exhaustion, a calmer warning color for later exhaustion before reset, and increase forecast text readability in collapsed and expanded rows.",
       "status": "completed",
       "priority": "medium",
       "phase": "A",
       "created_at": "2026-10-24",
-      "updated_at": "2026-10-24",
+      "updated_at": "2026-10-26",
       "history": [
         {
           "at": "2026-10-24",
@@ -97,10 +97,34 @@
           "from_status": "completed",
           "to_status": "completed",
           "evidence": "Audited settings actions; Codex quota summary now explicitly reads as a forecast, split into “Previsão: cota 5h” and “Esgota em …”. Full pace explanation remains in expanded details. Startup errors are surfaced. Python and Swift tests pass; app rebuilt and rendered panel inspected."
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "completed",
+          "to_status": "in_progress",
+          "evidence": "Reopened after screenshot review found a weekly quota depletion alert extrapolated from only ~2 hours of usage; adding minimum-history safeguards and regression coverage."
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Weekly Codex projections now wait for at least 24 hours of cycle history; shorter quota windows retain forecasts after one hour. Added regression checks for the screenshot case and for continued valid projections. Swift and 17 Python tests pass; app rebuilt and relaunched."
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "completed",
+          "to_status": "in_progress",
+          "evidence": "User reports the quota forecast overstates urgency in red and forecast copy is too small; revising severity and text hierarchy."
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Forecasts that predict exhaustion more than 1 hour away now use amber; red is reserved for exhaustion within 1 hour. Forecast copy is 12.5 pt in the summary and expanded details, reset text is 11.5 pt. Swift tests, 17 Python tests, typography scan and rendered snapshot pass; app rebuilt and relaunched."
         }
       ],
-      "completed_at": "2026-10-24",
-      "evidence": "Audited settings actions; Codex quota summary now explicitly reads as a forecast, split into “Previsão: cota 5h” and “Esgota em …”. Full pace explanation remains in expanded details. Startup errors are surfaced. Python and Swift tests pass; app rebuilt and rendered panel inspected."
+      "evidence": "Forecasts that predict exhaustion more than 1 hour away now use amber; red is reserved for exhaustion within 1 hour. Forecast copy is 12.5 pt in the summary and expanded details, reset text is 11.5 pt. Swift tests, 17 Python tests, typography scan and rendered snapshot pass; app rebuilt and relaunched.",
+      "completed_at": "2026-10-26"
     },
     {
       "id": "AUB-008",
@@ -121,6 +145,362 @@
       ],
       "completed_at": "2026-10-24",
       "evidence": "Added a generator that writes only to a temporary cache and renders four demo images (menu bar, overview, expanded Codex quota and OpenCode costs). README captions identify all values and session names as fictional. Rendered and visually inspected all PNGs; 11 Python tests, Swift compatibility tests and app build pass."
+    },
+    {
+      "id": "AUB-009",
+      "title": "Prepare public release after repository audit",
+      "description": "Checklist geral da primeira divulgação pública. Trabalho desmembrado em AUB-010 a AUB-019 com critérios de aceite e dependências. Encerrar somente após validação final AUB-019. Auditoria inicial: repo PUBLIC, acesso anônimo HTTP 200, 11 testes Python e compatibilidade Swift aprovados; testes não comprovam instalação limpa ou correção visual.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24",
+      "depends_on": [
+        "AUB-019"
+      ]
+    },
+    {
+      "id": "AUB-010",
+      "title": "Corrigir sobreposição ao expandir acordeões",
+      "description": "Reproduzir a sobreposição relatada no painel; ajustar layout e expansão. Aceite: evidência visual real de Codex, OpenCode e gráfico abrindo e fechando sem recortes, sobreposição ou texto truncado.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24"
+    },
+    {
+      "id": "AUB-011",
+      "title": "Definir e adicionar licença do projeto",
+      "description": "Escolher licença com o mantenedor, adicionar LICENSE e referência no README. Conferir atribuições de dependências e uso de ícones/marcas; não presumir que tornar público define uma licença.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24"
+    },
+    {
+      "id": "AUB-012",
+      "title": "Simplificar instalação e documentar ciclo completo",
+      "description": "Documentar clone, pré-requisitos, instalação, atualização e desinstalação. Tornar ccusage opcional para quem usa apenas Codex; fixar versão validada e informar runtime necessário. Preservar configuração e não apagar dados na desinstalação comum. Validar em ambiente limpo.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24"
+    },
+    {
+      "id": "AUB-013",
+      "title": "Tornar testes Swift portáveis",
+      "description": "Remover dependência de rtk dos testes distribuídos e substituir git show de commit histórico por fixture versionada. Aceite: testes Python e Swift executam em checkout limpo e sem histórico Git completo ou ferramentas locais particulares.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24"
+    },
+    {
+      "id": "AUB-014",
+      "title": "Adicionar CI para macOS",
+      "description": "Executar testes Python, compatibilidade Swift e compilação em GitHub Actions; separar compilação da instalação/reabertura do app. Declarar versões e permissões mínimas. Aceite: execução verde no GitHub, sem depender da máquina do mantenedor.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24",
+      "depends_on": [
+        "AUB-013"
+      ]
+    },
+    {
+      "id": "AUB-015",
+      "title": "Documentar privacidade e fontes de dados",
+      "description": "Explicar caches e caminhos locais, nomes de sessões, permissões de notificações, leitura do Keychain Cursor, chamada autenticada ao dashboard Cursor e leitura de cotas Codex. Distinguir rede dos provedores e dados locais; não prometer ausência de rede. Manter screenshots explicitamente sintéticas.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24"
+    },
+    {
+      "id": "AUB-016",
+      "title": "Limitar tempo de coleta e mostrar falhas corretamente",
+      "description": "Adicionar timeout global, término de subprocessos e tratamento de exit status no coletor Swift. Uma fonte travada não deve manter atualização infinita nem esconder resultados das fontes saudáveis. Cobrir falha e timeout com verificação relevante.",
+      "status": "completed",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Coletores executam isolados; falha/timeout de uma fonte não bloqueia fontes saudáveis. Cada fonte tem limite de 45s e encerra seu grupo de processos; Swift tem proteção de 90s, lê stdout/stderr simultaneamente e reporta exit status. Testes Python e Swift passaram; app reinstalado e cache real atualizado com Codex/OpenCode sem erros."
+        }
+      ],
+      "completed_at": "2026-10-26",
+      "evidence": "Coletores executam isolados; falha/timeout de uma fonte não bloqueia fontes saudáveis. Cada fonte tem limite de 45s e encerra seu grupo de processos; Swift tem proteção de 90s, lê stdout/stderr simultaneamente e reporta exit status. Testes Python e Swift passaram; app reinstalado e cache real atualizado com Codex/OpenCode sem erros."
+    },
+    {
+      "id": "AUB-017",
+      "title": "Preparar pacote independente e release versionada",
+      "description": "Separar build, instalação e lançamento; embutir coletores na distribuição e resolver Python/ccusage sem checkout ou symlink em ~/.local/bin. Definir suporte Apple Silicon/Intel e validar cada arquitetura declarada. Gerar ZIP/DMG versionado e SHA256; planejar assinatura Developer ID/notarização conforme credenciais disponíveis, sem contornar Gatekeeper. Aceite: instalar e abrir pacote em Mac limpo.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24",
+      "depends_on": [
+        "AUB-012",
+        "AUB-014"
+      ]
+    },
+    {
+      "id": "AUB-018",
+      "title": "Distribuir via Homebrew Cask em tap próprio",
+      "description": "Após pacote versionado, preparar tap próprio homebrew-tap com cask, URL de release imutável, SHA256 e suporte macOS/arquiteturas explícitos. Validar instalação, upgrade e uninstall preservando configurações; remoção de dados apenas opt-in. Não publicar instrução como funcional antes de teste real. Não depende de aceitação no catálogo oficial.",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24",
+      "depends_on": [
+        "AUB-017"
+      ]
+    },
+    {
+      "id": "AUB-019",
+      "title": "Validar release antes da divulgação",
+      "description": "Validação final pré-divulgação: revisar docs/PRE_RELEASE_REVIEW.md e os critérios da auditoria original. Validar pacote em Mac limpo, budgets legados, períodos, parciais/cache, configurações, alertas, acessibilidade e UI. As novas dependências de maior prioridade bloqueiam divulgação; demais achados AUB-024 a AUB-027 devem ser corrigidos ou explicitamente triados. Revisar conteúdo e histórico para segredos sem imprimir valores sensíveis. Registrar cobertura real e limitações.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-24",
+      "depends_on": [
+        "AUB-010",
+        "AUB-011",
+        "AUB-014",
+        "AUB-015",
+        "AUB-016",
+        "AUB-017",
+        "AUB-018",
+        "AUB-020",
+        "AUB-021",
+        "AUB-022",
+        "AUB-023"
+      ]
+    },
+    {
+      "id": "AUB-020",
+      "title": "Proteger gravação e recuperação das preferências",
+      "description": "Revisão docs/PRE_RELEASE_REVIEW.md #1. Serializar operações CLI de leitura-alteração-gravação com lock entre processos e escrita atômica; não sobrescrever config inválida. Centralizar todos os setters e reverter alterações otimistas se salvar falhar. Aceite: alterações simultâneas preservadas, falhas preservam arquivo anterior e erro recuperável.",
+      "status": "completed",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Lock entre processos, gravação atômica, preservação de JSON inválido; testes cobrem escritas concorrentes."
+        }
+      ],
+      "completed_at": "2026-10-26",
+      "evidence": "Lock entre processos, gravação atômica, preservação de JSON inválido; testes cobrem escritas concorrentes."
+    },
+    {
+      "id": "AUB-021",
+      "title": "Alinhar períodos de totais e budgets mensais",
+      "description": "Revisão #2. Separar mês calendário agregado e ciclo de cobrança Cursor, com datas explícitas. Hoje Usage.total(.month) mistura períodos e o compara com orçamento calendário. Validar virada de mês, reset do plano, fuso e budget mensal. Detalhes por modelo devem seguir seletor ou declarar que são de hoje.",
+      "status": "completed",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Totais por mês calendário separados do ciclo Cursor; cobertura de períodos e compatibilidade do payload Swift."
+        }
+      ],
+      "completed_at": "2026-10-26",
+      "evidence": "Totais por mês calendário separados do ciclo Cursor; cobertura de períodos e compatibilidade do payload Swift."
+    },
+    {
+      "id": "AUB-022",
+      "title": "Mostrar dados parciais e desatualizados na barra",
+      "description": "Revisão #3. Registrar último sucesso por fonte e status independente de valor; incorporar falha/idade ao tooltip e rótulo acessível da barra. Evitar custo parcial ou cache antigo parecer total atual; não confundir indisponível com zero. Aceite: uma/todas fontes falhas, suspensão/retorno e cache antigo ficam identificáveis.",
+      "status": "completed",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Fontes indisponíveis e dados possivelmente antigos aparecem no estado acessível e no tooltip da barra; compilação validada."
+        }
+      ],
+      "completed_at": "2026-10-26",
+      "evidence": "Fontes indisponíveis e dados possivelmente antigos aparecem no estado acessível e no tooltip da barra; compilação validada."
+    },
+    {
+      "id": "AUB-023",
+      "title": "Criar recuperação de erro e primeiro uso sem loading infinito",
+      "description": "Revisão #4. Distinguir carregando, vazio e falha sem cache; hoje usage nil mantém ProgressView mesmo após falha. Mostrar mensagem curta, Tentar novamente e instrução contextual por fonte; detalhes completos copiáveis mediante ação, sem segredos. Validar erro antes do primeiro sucesso e falha com cache existente.",
+      "status": "completed",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Falha sem cache mostra erro e nova tentativa; falha por fonte mostra recuperação; compilação validada."
+        }
+      ],
+      "completed_at": "2026-10-26",
+      "evidence": "Falha sem cache mostra erro e nova tentativa; falha por fonte mostra recuperação; compilação validada."
+    },
+    {
+      "id": "AUB-024",
+      "title": "Confirmar envio antes de deduplicar alertas",
+      "description": "Revisão #5. Hoje UserDefaults registra limiar antes da autorização/agendamento. Registrar somente após agendamento bem sucedido, tratar callback, evitar duplicados e expor permissão negada com ação para ajustes do macOS. Solicitar permissão no contexto de ativação e oferecer notificação de teste.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Alertas só deduplicam após agendamento bem-sucedido; permissão contextual, acesso aos Ajustes e envio de teste."
+        }
+      ],
+      "completed_at": "2026-10-26",
+      "evidence": "Alertas só deduplicam após agendamento bem-sucedido; permissão contextual, acesso aos Ajustes e envio de teste."
+    },
+    {
+      "id": "AUB-025",
+      "title": "Corrigir nomes de sessões OpenCode entre schemas e XDG",
+      "description": "Revisão #6. Reprodução sintética: SQLite contendo apenas session_v2 e uma sessão válida retorna {}. Consultar tabelas existentes independentemente, preservar resultados e respeitar XDG_DATA_HOME. Garantir fechamento da conexão. Fixtures para session, session_v2, ambas, tabela ausente e diretório personalizado.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Títulos OpenCode cobertos para session, session_v2, ambas e tabelas ausentes; XDG respeitado."
+        }
+      ],
+      "completed_at": "2026-10-26",
+      "evidence": "Títulos OpenCode cobertos para session, session_v2, ambas e tabelas ausentes; XDG respeitado."
+    },
+    {
+      "id": "AUB-026",
+      "title": "Uniformizar valores pequenos e formatação por idioma",
+      "description": "Revisão #7. Manter no máximo uma casa decimal conforme preferência do usuário, mas distinguir valor positivo menor que arredondamento de zero real (exemplo < $0.1). Uniformizar locale entre barra/painel e política de porcentagem truncada/arredondada. Testar zero, centavos positivos, limites e en/pt/es.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "Valores exibidos com até uma casa, custo pequeno distinguido de zero, locale consistente e percentual arredondado."
+        }
+      ],
+      "completed_at": "2026-10-26",
+      "evidence": "Valores exibidos com até uma casa, custo pequeno distinguido de zero, locale consistente e percentual arredondado."
+    },
+    {
+      "id": "AUB-027",
+      "title": "Validar acessibilidade e preferências visuais do macOS",
+      "description": "Revisão #8. Verificar teclado, VoiceOver e estado expandido, textos longos e múltiplas cotas, Increase Contrast e Reduce Motion. Pequenas fontes fixas e animações sem consulta a Reduce Motion são alvos da revisão; não presumir falha do leitor de tela sem teste. Aceite: evidência real das operações principais, preservando painel compacto.",
+      "status": "in_progress",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-10-24",
+      "updated_at": "2026-10-26",
+      "history": [
+        {
+          "at": "2026-10-26",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "in_progress",
+          "evidence": "Estado expandido acessível e animações respeitam Reduce Motion; build instalado. Teclado, VoiceOver e Increase Contrast ainda precisam de teste direto no macOS."
+        },
+        {
+          "at": "2026-10-26",
+          "from_status": "in_progress",
+          "to_status": "in_progress",
+          "evidence": "Build instalada. agent-device só expõe o item de menu; ativações por clique não abriram o popover. macOS recusou teclas via osascript (1002). Teclado, VoiceOver e Increase Contrast seguem sem validação prática."
+        }
+      ],
+      "evidence": "Build instalada. agent-device só expõe o item de menu; ativações por clique não abriram o popover. macOS recusou teclas via osascript (1002). Teclado, VoiceOver e Increase Contrast seguem sem validação prática."
     }
   ],
   "schema_version": 1
