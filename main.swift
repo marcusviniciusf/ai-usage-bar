@@ -889,6 +889,23 @@ private let dayParser: DateFormatter = {
 
 // MARK: - Components
 
+/// Fades new content in without animating layout. The panel window resizes in one step, so animated
+/// sizes or offsets inside it fight the window and make the header drift and the text ghost.
+struct FadeInModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isVisible = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible || reduceMotion ? 1 : 0)
+            .onAppear { withAnimation(.easeOut(duration: 0.18)) { isVisible = true } }
+    }
+}
+
+extension View {
+    func fadeIn() -> some View { modifier(FadeInModifier()) }
+}
+
 struct Card<Content: View>: View {
     var padding: CGFloat = 14
     var spacing: CGFloat = 10
@@ -905,12 +922,13 @@ struct Card<Content: View>: View {
 struct SegmentedPill: View {
     @Binding var selection: Window
     @Namespace private var pill
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(Window.allCases) { window in
                 Button {
-                    withAnimation(.snappy(duration: 0.25)) { selection = window }
+                    selection = window
                 } label: {
                     Text(tr(window.rawValue))
                         .font(.system(size: 11.5, weight: .semibold))
@@ -928,6 +946,7 @@ struct SegmentedPill: View {
                 .buttonStyle(.plain)
             }
         }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: selection)
         .padding(3)
         .background(Capsule().fill(Color.black.opacity(0.35)))
         .overlay(Capsule().strokeBorder(Theme.stroke))
@@ -1034,6 +1053,7 @@ struct ContentView: View {
         }
         .padding(12)
         .frame(width: 340)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.background)
         .environment(\.colorScheme, .dark)
         .environment(\.locale, L10n.locale)
@@ -1230,7 +1250,7 @@ struct ContentView: View {
         let isExpanded = expanded == tool.id
         return VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { expanded = isExpanded ? nil : tool.id }
+                expanded = isExpanded ? nil : tool.id
             } label: {
                 HStack(spacing: 10) {
                     ToolAppIcon(toolId: tool.id, fallback: tool.symbol, size: 24).foregroundStyle(tool.color)
@@ -1243,6 +1263,7 @@ struct ContentView: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isExpanded)
                 }
                 .padding(.horizontal, 8).padding(.vertical, 7)
                 .contentShape(Rectangle())
@@ -1253,7 +1274,7 @@ struct ContentView: View {
             if isExpanded {
                 details(tool)
                     .padding(.horizontal, 8).padding(.bottom, 8)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .fadeIn()
             }
         }
     }
@@ -1438,7 +1459,7 @@ struct ContentView: View {
     private func chart(_ usage: Usage) -> some View {
         Card(padding: 10, spacing: 6) {
             Button {
-                withAnimation(.snappy(duration: 0.2)) { chartExpanded.toggle() }
+                chartExpanded.toggle()
             } label: {
                 HStack(spacing: 8) {
                     Text(tr("LAST 14 DAYS · USD")).font(.system(size: 9.5, weight: .semibold)).tracking(0.6)
@@ -1456,6 +1477,7 @@ struct ContentView: View {
                     }
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.tertiary)
                         .rotationEffect(.degrees(chartExpanded ? 90 : 0))
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: chartExpanded)
                 }
                 .contentShape(Rectangle())
             }
@@ -1486,7 +1508,7 @@ struct ContentView: View {
                     }
                 }
                 .frame(height: 90)
-                .transition(.opacity)
+                .fadeIn()
             }
         }
     }
