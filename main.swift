@@ -906,6 +906,30 @@ extension View {
     func fadeIn() -> some View { modifier(FadeInModifier()) }
 }
 
+/// The angle animates in its own transaction. An implicit animation on the arrow would also animate its
+/// position when rows above it open or close, which made it slide while the rest of the row had jumped.
+struct DisclosureChevron: View {
+    let isExpanded: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var angle: Double
+
+    init(isExpanded: Bool) {
+        self.isExpanded = isExpanded
+        _angle = State(initialValue: isExpanded ? 90 : 0)
+    }
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.tertiary)
+            .rotationEffect(.degrees(angle))
+            .frame(width: 10, height: 10)
+            .onChange(of: isExpanded) { _, expanded in
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { angle = expanded ? 90 : 0 }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
 struct Card<Content: View>: View {
     var padding: CGFloat = 14
     var spacing: CGFloat = 10
@@ -1260,10 +1284,7 @@ struct ContentView: View {
                     }
                     Spacer(minLength: 4)
                     rowTrailing(tool)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isExpanded)
+                    DisclosureChevron(isExpanded: isExpanded)
                 }
                 .padding(.horizontal, 8).padding(.vertical, 7)
                 .contentShape(Rectangle())
@@ -1475,9 +1496,7 @@ struct ContentView: View {
                             }
                         }.font(.system(size: 9.5)).foregroundStyle(Theme.secondary)
                     }
-                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.tertiary)
-                        .rotationEffect(.degrees(chartExpanded ? 90 : 0))
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: chartExpanded)
+                    DisclosureChevron(isExpanded: chartExpanded)
                 }
                 .contentShape(Rectangle())
             }
