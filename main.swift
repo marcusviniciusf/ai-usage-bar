@@ -930,6 +930,26 @@ struct DisclosureChevron: View {
     }
 }
 
+/// The spin comes from the clock and is paused when idle. A `repeatForever` animation can't be cancelled by
+/// switching the animation off, so it kept spinning after the refresh had finished.
+struct RefreshIcon: View {
+    let isLoading: Bool
+    let reduceMotion: Bool
+
+    var body: some View {
+        TimelineView(.animation(paused: !isLoading || reduceMotion)) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.white.opacity(0.06)))
+                .rotationEffect(.degrees(isLoading && !reduceMotion ? turn * 360 : 0))
+                .opacity(isLoading && reduceMotion ? 0.5 : 1)
+        }
+    }
+}
+
 struct Card<Content: View>: View {
     var padding: CGFloat = 14
     var spacing: CGFloat = 10
@@ -1115,14 +1135,7 @@ struct ContentView: View {
             }
             Spacer()
             Button(action: store.refresh) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(Color.white.opacity(0.06)))
-                    .rotationEffect(.degrees(store.isLoading && !reduceMotion ? 360 : 0))
-                    .animation(store.isLoading && !reduceMotion ? .linear(duration: 1).repeatForever(autoreverses: false) : nil,
-                               value: store.isLoading)
+                RefreshIcon(isLoading: store.isLoading, reduceMotion: reduceMotion)
             }
             .buttonStyle(.plain)
             .help(tr("Refresh usage"))
