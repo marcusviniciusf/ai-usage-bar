@@ -14,29 +14,38 @@ APP = Path.home() / "Applications/AI Usage.app/Contents/MacOS/AIUsage"
 IMAGES = ROOT / "docs/images"
 
 
-def demo_payload(now: datetime) -> dict:
-    daily_costs = [0.25, 0.85, 1.20, 0.40, 1.55, 0.75, 0.90,
-                   1.80, 2.10, 0.65, 1.20, 1.95, 1.10, 3.10]
-    daily = [
-        {"date": (now.date() - timedelta(days=13 - index)).isoformat(), "cost": cost}
-        for index, cost in enumerate(daily_costs)
-    ]
-    open_code = {
-        "id": "opencode", "name": "OpenCode", "error": None,
-        "today": 3.10, "week": 11.90, "month": 38.60, "monthLabel": now.strftime("%b"),
-        "daily": daily,
-        "models": [
-            {"name": "demo/model-a", "cost": 1.82},
-            {"name": "demo/model-b", "cost": 1.28},
-        ],
-        "chats": [
-            {"name": "Demo: implement settings", "cost": 1.82, "model": "demo/model-a"},
-            {"name": "Demo: polish panel", "cost": 1.28, "model": "demo/model-b"},
-        ],
-        # OpenCode has no safely filterable active-block rate yet.
-        "limit": None, "periodEnd": None, "rate": 0,
+def cost_tool(tool_id, name, today, week, month, costs, models, chats, rate=None, limit=None):
+    now = datetime.now().astimezone()
+    return {
+        "id": tool_id, "name": name, "error": None,
+        "today": today, "week": week, "month": month, "monthLabel": now.strftime("%b"),
+        "daily": [{"date": (now.date() - timedelta(days=len(costs) - 1 - index)).isoformat(), "cost": cost}
+                  for index, cost in enumerate(costs)],
+        "models": [{"name": model, "cost": cost} for model, cost in models],
+        "chats": [{"name": title, "cost": cost, "model": model} for title, cost, model in chats],
+        "limit": limit, "periodEnd": None, "rate": rate,
         "alertsEnabled": True, "mode": "cost", "budget": None, "quotas": None,
     }
+
+
+def demo_payload(now: datetime) -> dict:
+    cursor = cost_tool(
+        "cursor", "Cursor", 6.40, 21.80, 64.20,
+        [3.1, 4.8, 2.2, 5.5, 7.9, 1.0, 0.6, 4.4, 6.8, 5.2, 3.9, 8.3, 4.1, 6.4],
+        [("demo/model-a", 3.90), ("demo/model-b", 2.50)],
+        [("Demo: refactor settings", 3.10, "demo/model-a"), ("Demo: fix flaky test", 1.80, "demo/model-b")],
+        rate=2.1)
+    claude = cost_tool(
+        "claude", "Claude Code", 9.10, 38.40, 112.50,
+        [6.2, 8.4, 5.1, 9.9, 12.3, 2.0, 1.1, 7.7, 10.5, 8.2, 6.6, 11.8, 7.4, 9.1],
+        [("demo/model-c", 6.20), ("demo/model-d", 2.90)],
+        [("Demo: migrate API client", 4.30, "demo/model-c"), ("Demo: write release notes", 2.10, "demo/model-d")],
+        rate=3.4)
+    open_code = cost_tool(
+        "opencode", "OpenCode", 3.10, 11.90, 38.60,
+        [0.25, 0.85, 1.20, 0.40, 1.55, 0.75, 0.90, 1.80, 2.10, 0.65, 1.20, 1.95, 1.10, 3.10],
+        [("demo/model-a", 1.82), ("demo/model-b", 1.28)],
+        [("Demo: implement settings", 1.82, "demo/model-a"), ("Demo: polish panel", 1.28, "demo/model-b")])
     codex = {
         "id": "codex", "name": "Codex", "error": None,
         "today": 0, "week": 0, "month": 0, "monthLabel": now.strftime("%b"),
@@ -52,13 +61,11 @@ def demo_payload(now: datetime) -> dict:
     }
     return {
         "updatedAt": now.isoformat(timespec="seconds"),
-        "budget": None, "globalBudget": None,
-        "indicator": {"mode": "summary", "toolId": None},
-        "availableTools": [
-            {"id": "codex", "name": "Codex", "enabled": True},
-            {"id": "opencode", "name": "OpenCode", "enabled": True},
-        ],
-        "tools": [codex, open_code],
+        "budget": 20, "globalBudget": {"amount": 20, "period": "daily"},
+        "indicator": {"mode": "pinned", "toolIds": ["codex", "claude"]},
+        "availableTools": [{"id": t["id"], "name": t["name"], "enabled": True}
+                           for t in (codex, cursor, claude, open_code)],
+        "tools": [codex, cursor, claude, open_code],
     }
 
 
@@ -77,6 +84,7 @@ def main() -> None:
             ("--snapshot-bar", "ai-usage-menu-bar.png", []),
             ("--snapshot", "ai-usage-panel.png", ["Today"]),
             ("--snapshot", "ai-usage-codex-quota.png", ["Today", "codex"]),
+            ("--snapshot", "ai-usage-claude-costs.png", ["Today", "claude"]),
             ("--snapshot", "ai-usage-opencode-costs.png", ["Today", "opencode"]),
         ]
         for flag, filename, view_args in captures:

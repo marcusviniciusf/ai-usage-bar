@@ -2,24 +2,22 @@
 
 A macOS menu bar app that shows what you spend on AI coding tools and how much subscription quota you have left. Cursor, Claude Code, OpenCode and Codex. macOS 14+, English, Portuguese and Spanish.
 
-## Preview
-
-All values and session names below are fictional demo data, rendered in an isolated temporary cache.
-
 <p align="center">
-  <img src="docs/images/ai-usage-menu-bar.png" width="400" alt="AI Usage menu bar indicator with fictional values" />
+  <img src="docs/images/ai-usage-hero.png" width="760" alt="AI Usage in the macOS menu bar showing spend and quota for Codex, Cursor, Claude Code and OpenCode (fictional demo data)" />
 </p>
 
-<p align="center">
-  <img src="docs/images/ai-usage-panel.png" width="340" alt="AI Usage overview with fictional Codex quota and OpenCode costs" />
-  <img src="docs/images/ai-usage-codex-quota.png" width="340" alt="Expanded Codex quota details with fictional values" />
-</p>
+<details>
+<summary>More screenshots (fictional demo data)</summary>
 
 <p align="center">
-  <img src="docs/images/ai-usage-opencode-costs.png" width="340" alt="Expanded OpenCode model and session costs with fictional values" />
+  <img src="docs/images/ai-usage-codex-quota.png" width="300" alt="Codex quota windows with a limit forecast" />
+  <img src="docs/images/ai-usage-claude-costs.png" width="300" alt="Claude Code models and top sessions" />
+  <img src="docs/images/ai-usage-opencode-costs.png" width="300" alt="OpenCode models and top sessions" />
 </p>
 
-After rebuilding the app, regenerate these images with `python3 scripts/render_demo_screenshots.py`.
+Regenerate with `python3 scripts/render_demo_screenshots.py && python3 scripts/render_hero.py` after rebuilding the app (the second needs Pillow).
+
+</details>
 
 ## Install
 
