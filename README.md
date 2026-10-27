@@ -34,7 +34,7 @@ Collector scripts are copied to `~/.local/bin`, outside macOS-protected folders 
 
 Only detected tools appear. Cursor is detected by its app or local database; Claude Code by its CLI or projects directory; OpenCode by its CLI or data directory; Codex by its CLI, including the CLI bundled with ChatGPT or Codex.
 A detected tool with a collection error stays visible. Missing tools are hidden.
-Cursor dashboard access uses its existing local login and may ask for Keychain access.
+Cursor access reads your existing Cursor login: the app asks macOS for the "Cursor Safe Storage" Keychain item (choose **Always Allow**, otherwise macOS prompts on every refresh) and calls the same undocumented dashboard endpoint (`api2.cursor.sh`) the Cursor usage page uses, so it can break if Cursor changes it. The decryption key is briefly passed to `/usr/bin/openssl` on the command line. Nothing is sent anywhere else. Claude Code and OpenCode figures are API list-price estimates from local logs, not what a subscription bills.
 
 ## Two monitoring modes
 
@@ -67,7 +67,7 @@ ai-usage --set-alerts codex off
 
 Budget settings are advisory and never block tools. Alerts fire at 80% and 100%, deduplicated by tool and quota reset or calendar period. Notifications require macOS permission.
 OpenCode and Claude top sessions show lifetime session cost and may span multiple days; the UI labels this separately from today's models.
-Enable automatic startup with **Iniciar com o Mac**.
+Enable automatic startup with **Launch at login** (gear menu).
 
 ## Validation
 
@@ -85,18 +85,18 @@ Render the current cached view without changing preferences:
 
 ## Pace and forecasts
 
-- **Cost:** with a global budget set, the Hoje/Semana/Mês picker scales it by the days elapsed (daily budget × days, weeks start Monday) and shows the % used. On Hoje it also shows the combined $/h (Cursor last hour, Claude active 5h block) and how long until the limit at that pace.
+- **Cost:** with a global budget set, the Today/Week/Month picker scales it by the days elapsed (daily budget × days, weeks start Monday) and shows the % used. On Today it also shows the combined $/h (Cursor last hour, Claude active 5h block) and how long until the limit at that pace.
 - **Quota:** each Codex window projects linearly from usage so far, either "esgota em ~Xh, antes de renovar" or the expected % at renewal. Needs a used window of at least 10 minutes.
 - The 80% notifications (global budget and quotas) include the same ETA.
 
 ## Panel layout
 
-Compact by default (about 420pt tall): hero, one row per tool, collapsed 14-day chart. Tap a tool row to expand models, sessions, budget and plan details; per-tool options live in its **Opções** menu. App settings (bar indicator, global budget, launch at login, quit) are in the gear menu, a native menu, so they open instantly.
+Compact by default (about 420pt tall): hero, one row per tool, collapsed 14-day chart. Tap a tool row to expand models, sessions, budget and plan details; per-tool options live in its **Options** menu. App settings (bar indicator, global budget, launch at login, quit) are in the gear menu, a native menu, so they open instantly.
 Preference changes apply immediately in the UI and are persisted in the background. Cursor events are cached in `~/Library/Caches/ai-usage-cursor-events.json`, so only the last day is refetched (refresh about 2s instead of 9s).
 
 ## Tool filter
 
-Pick which detected tools are monitored in the gear menu (**Ferramentas monitoradas**). A hidden tool is not collected, so it drops out of the totals, the budget, alerts and the bar indicator, and refreshes get faster. Per Mac, stored as `tools.<id>.enabled` in the config.
+Pick which detected tools are monitored in the gear menu (**Monitored tools**). A hidden tool is not collected, so it drops out of the totals, the budget, alerts and the bar indicator, and refreshes get faster. Per Mac, stored as `tools.<id>.enabled` in the config.
 
 ```bash
 ai-usage --set-tool-enabled cursor off
@@ -117,3 +117,6 @@ English, Portuguese (Brasil) and Spanish. The default follows the device's first
 To add a language, add a case to `AppLanguage` and a table in `L10n.tables` (English strings are the keys; missing keys fall back to English). Quota windows ("5 hours", "Weekly") are named by the app from the window length, not by the collector.
 Render a screenshot in another language without changing the saved choice: `AIUsage --snapshot out.png Today --lang es`.
 
+## License
+
+MIT, see [LICENSE](LICENSE).

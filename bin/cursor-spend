@@ -35,22 +35,32 @@ def read_state(key):
     return value.decode() if isinstance(value, bytes) else value
 
 
+LAST_ERROR = None
+
+
 def access_token():
     """Cursor stores the token as Electron safeStorage ciphertext: cursor-safe-storage:v1:<b64 of v10 + AES-128-CBC>."""
     value = read_state("cursorAuth/accessToken")
     if not value or not value.startswith("cursor-safe-storage:"):
         return value
-    password = subprocess.run(
-        ["/usr/bin/security", "find-generic-password", "-s", "Cursor Safe Storage", "-w"],
-        capture_output=True, text=True,
-    ).stdout.strip()
+    global LAST_ERROR
+    try:
+        found = subprocess.run(
+            ["/usr/bin/security", "find-generic-password", "-s", "Cursor Safe Storage", "-w"],
+            capture_output=True, text=True, timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        LAST_ERROR = "Keychain prompt timed out. Choose Always Allow for AI Usage to read Cursor's session."
+        return None
+    password = found.stdout.strip()
     if not password:
+        LAST_ERROR = "Keychain access to Cursor's session was denied. Refresh and choose Always Allow."
         return None
     key = hashlib.pbkdf2_hmac("sha1", password.encode(), b"saltysalt", 1003, 16)
     blob = base64.b64decode(value.split(":", 2)[2] + "==")
     plain = subprocess.run(
         ["/usr/bin/openssl", "enc", "-d", "-aes-128-cbc", "-K", key.hex(), "-iv", "20" * 16],
-        input=blob[3:], capture_output=True,
+        input=blob[3:], capture_output=True, timeout=20,
     ).stdout
     return plain.decode(errors="replace").strip() or None
 

@@ -17,14 +17,14 @@ cp bin/cursor-spend "$HOME/.local/bin/cursor-spend"
 chmod 755 "$HOME/.local/bin/ai-usage" "$HOME/.local/bin/cursor-spend"
 
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# ccusage feeds Claude Code and OpenCode only; Cursor and Codex work without it.
 if ! command -v ccusage >/dev/null; then
   if command -v bun >/dev/null; then
-    bun add -g ccusage
+    bun add -g ccusage || echo "Warning: could not install ccusage; Claude Code and OpenCode will show an error."
   elif command -v npm >/dev/null; then
-    npm install -g ccusage
+    npm install -g ccusage || echo "Warning: could not install ccusage; Claude Code and OpenCode will show an error."
   else
-    echo "Need bun or npm to install ccusage (brew install node)."
-    exit 1
+    echo "Note: ccusage not installed (needs bun or npm). Claude Code and OpenCode stay unavailable until you run: npm install -g ccusage"
   fi
 fi
 
@@ -35,4 +35,4 @@ for t in json.load(sys.stdin)["tools"]:
     print("  %-12s today $%.2f  %s" % (t["name"], t["today"], "ERROR: " + t["error"] if t["error"] else "ok"))'
 
 ./build.sh
-echo "Done. Click the sparkles icon in the menu bar, then turn on Iniciar com o Mac in the footer."
+echo "Done. Click the sparkles icon in the menu bar, then open the gear menu and turn on Launch at login."

@@ -286,6 +286,20 @@ for line in sys.stdin:
             command=[sys.executable, "-c", "import sys; print('collector failed',file=sys.stderr); sys.exit(7)"])
         self.assertEqual(failed["error"], "collector failed")
 
+    def test_burn_rate_uses_cost_over_elapsed_block_time(self):
+        started = collector.datetime.now(collector.timezone.utc) - collector.timedelta(hours=2)
+        block = {"startTime": started.isoformat().replace("+00:00", "Z"), "costUSD": 10.0,
+                 "burnRate": {"costPerHour": 999}}
+        with patch.object(collector, "ccusage_json", return_value={"blocks": [block]}):
+            self.assertAlmostEqual(collector.burn_rate("claude"), 5.0, delta=0.1)
+        with patch.object(collector, "ccusage_json", return_value={"blocks": []}):
+            self.assertEqual(collector.burn_rate("claude"), 0.0)
+
+    def test_missing_ccusage_reports_install_hint(self):
+        with patch.object(collector.subprocess, "run", side_effect=FileNotFoundError):
+            with self.assertRaisesRegex(RuntimeError, "bun add -g ccusage"):
+                collector.ccusage_json("claude", "daily")
+
 
 if __name__ == "__main__":
     unittest.main()

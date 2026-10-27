@@ -41,6 +41,12 @@ old_test = common + '''
 new_test = common + '''
         check(usage.globalBudget?.amount == 80)
         check(usage.total(.today) == 8)
+        check(BudgetInput.parse("1,000") == 1000)
+        check(BudgetInput.parse("1.000,50") == 1000.5)
+        check(BudgetInput.parse("1,000.50") == 1000.5)
+        check(BudgetInput.parse("12,5") == 12.5)
+        check(BudgetInput.parse("$60") == 60)
+        check(BudgetInput.parse("abc") == nil)
         check(3.0.dollars == "$3")
         check(3.08.dollars == "$3,1")
         check(3.0.compactDollars == "$3")

@@ -176,11 +176,15 @@ def cursor_events(spend, token, team, user, start_ms):
 
 
 def cursor():
-    spend = SourceFileLoader("cursor_spend", os.path.join(HOME, ".local/bin/cursor-spend")).load_module()
+    here = os.path.join(os.path.dirname(os.path.realpath(__file__)), "cursor-spend")
+    installed = os.path.join(HOME, ".local/bin/cursor-spend")
+    spend = SourceFileLoader("cursor_spend", here if os.path.isfile(here) else installed).load_module()
+    if not os.path.isfile(spend.STATE_DB):
+        raise RuntimeError("Cursor not found. Install and sign in to Cursor, or turn it off in the gear menu.")
     token = spend.access_token()
     team, user, period_start, period_end = spend.identity()
     if not token or not team or not user:
-        raise RuntimeError("Not signed in to Cursor")
+        raise RuntimeError(getattr(spend, "LAST_ERROR", None) or "Not signed in to Cursor. Open Cursor and its usage panel once.")
     period_ms = period_start or int(datetime.combine(month_start, datetime.min.time()).timestamp() * 1000)
     period_label = datetime.fromtimestamp(period_ms / 1000).strftime("%b %-d")
     start = min(datetime.fromtimestamp(period_ms / 1000).date(), history_start, week_start)
@@ -227,7 +231,10 @@ def cursor():
 
 def ccusage_json(*args):
     command = [BUN, "run", "--bun", CCUSAGE] if BUN else [CCUSAGE]
-    result = subprocess.run([*command, *args, "--json"], capture_output=True, text=True, env=ENV, timeout=180)
+    try:
+        result = subprocess.run([*command, *args, "--json"], capture_output=True, text=True, env=ENV, timeout=180)
+    except FileNotFoundError:
+        raise RuntimeError("ccusage not found. Install it: bun add -g ccusage (or npm install -g ccusage)")
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or f"ccusage exited with status {result.returncode}")
     out = result.stdout
@@ -240,8 +247,11 @@ def burn_rate(agent):
         return 0.0  # No supported per-model block report to filter free usage safely.
     try:
         blocks = ccusage_json(agent, "blocks", "--active").get("blocks") or []
-        return float(((blocks[0] if blocks else {}).get("burnRate") or {}).get("costPerHour") or 0)
-    except (ValueError, IndexError, RuntimeError, subprocess.SubprocessError):
+        block = blocks[0] if blocks else {}
+        started = datetime.fromisoformat(block["startTime"].replace("Z", "+00:00"))
+        hours = max((datetime.now(started.tzinfo) - started).total_seconds() / 3600, 0.25)
+        return float(block.get("costUSD") or 0) / hours
+    except (KeyError, ValueError, IndexError, TypeError, RuntimeError, subprocess.SubprocessError):
         return 0.0
 
 
@@ -349,7 +359,8 @@ COLLECTOR_TIMEOUT_SECONDS = 45
 
 
 def codex_binary():
-    candidates = [shutil.which("codex"),
+    candidates = [shutil.which("codex", path=ENV["PATH"]),
+                  "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
                   "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
                   "/Applications/Codex.app/Contents/Resources/codex",
                   os.path.join(HOME, ".local/bin/codex"), os.path.join(HOME, ".bun/bin/codex")]

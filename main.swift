@@ -1546,6 +1546,25 @@ struct ContentView: View {
     }
 }
 
+enum BudgetInput {
+    /// "1,000" and "1.000" are thousands, "1,5" and "1.50" are decimals; a trailing group of exactly three digits after one separator is a thousands group.
+    static func parse(_ text: String) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "$", with: "")
+        let separators = trimmed.filter { $0 == "," || $0 == "." }
+        guard !trimmed.isEmpty, trimmed.allSatisfy({ $0.isNumber || $0 == "," || $0 == "." }) else { return nil }
+        if separators.count > 1 {
+            let last = trimmed.lastIndex(where: { $0 == "," || $0 == "." })!
+            let tail = trimmed[trimmed.index(after: last)...]
+            let head = trimmed[..<last].filter { $0.isNumber }
+            return tail.count == 3 && separators.dropLast().allSatisfy({ $0 == separators.first })
+                ? Double(head + tail) : Double(head + "." + tail)
+        }
+        guard let separator = trimmed.firstIndex(where: { $0 == "," || $0 == "." }) else { return Double(trimmed) }
+        let tail = trimmed[trimmed.index(after: separator)...]
+        return tail.count == 3 ? Double(trimmed.filter { $0.isNumber }) : Double(trimmed.replacingOccurrences(of: ",", with: "."))
+    }
+}
+
 struct BudgetEditor: View {
     let tool: Tool?
     @EnvironmentObject private var store: Store
@@ -1567,7 +1586,7 @@ struct BudgetEditor: View {
         _period = State(initialValue: "daily")
     }
 
-    private var value: Double? { Double(amount.replacingOccurrences(of: ",", with: ".")) }
+    private var value: Double? { BudgetInput.parse(amount) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
