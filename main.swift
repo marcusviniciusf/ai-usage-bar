@@ -313,6 +313,23 @@ struct Usage: Codable {
         (indicator?.toolIds ?? []).filter { id in availableTools?.first(where: { $0.id == id })?.enabled != false }
     }
 
+    /// Pinned ids ordered by what is hot today: quotas at 80%+ first, then cost tools by today's spend, then other quotas; broken or missing tools last. Ties keep pin order.
+    var pinnedIdsByUsage: [String] {
+        func rank(_ id: String) -> (Int, Double) {
+            guard let tool = tools.first(where: { $0.id == id }), tool.error == nil else { return (3, 0) }
+            if tool.mode == "quota" {
+                let used = tool.quotas?.map(\.usedPercent).max() ?? 0
+                return used >= 80 ? (0, -used) : (2, -used)
+            }
+            return (1, -tool.today)
+        }
+        let ids = pinnedIds
+        return ids.enumerated().sorted { a, b in
+            let (ra, rb) = (rank(a.element), rank(b.element))
+            return ra != rb ? ra < rb : a.offset < b.offset
+        }.map(\.element)
+    }
+
     var compactIndicatorParts: [IndicatorPart] {
         func compact(_ tool: Tool) -> IndicatorPart {
             if tool.error != nil { return IndicatorPart(symbol: tool.symbol, text: "—", toolId: tool.id) }
@@ -325,7 +342,7 @@ struct Usage: Codable {
         if indicator?.mode == "fixed", let id = indicator?.toolId {
             return [tools.first(where: { $0.id == id }).map(compact) ?? IndicatorPart(symbol: "exclamationmark.circle", text: "—")]
         }
-        if indicator?.mode == "pinned", case let ids = pinnedIds, !ids.isEmpty {
+        if indicator?.mode == "pinned", case let ids = pinnedIdsByUsage, !ids.isEmpty {
             return ids.prefix(2).map { id in
                 tools.first(where: { $0.id == id }).map(compact) ?? IndicatorPart(symbol: "exclamationmark.circle", text: "—")
             }
@@ -381,7 +398,7 @@ struct Usage: Codable {
         let text: String
         if mode == "fixed", let id = indicator?.toolId {
             text = tools.first(where: { $0.id == id }).map(label) ?? tr("%@ unavailable", id.capitalized)
-        } else if mode == "pinned", case let ids = pinnedIds, !ids.isEmpty {
+        } else if mode == "pinned", case let ids = pinnedIdsByUsage, !ids.isEmpty {
             text = ids.map { id in tools.first(where: { $0.id == id }).map(label) ?? tr("%@ unavailable", id.capitalized) }.joined(separator: " · ")
         } else if mode == "urgent", let highest {
             text = highest.1

@@ -97,9 +97,19 @@ new_test = common + '''
         check(try read().indicatorPresentation.text.contains("indisponível"))
         json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "opencode"]]
         check(try read().compactIndicatorParts.count == 2)
-        check(try read().compactIndicatorParts[0].text == "70%")
-        check(try read().indicatorPresentation.text == "Codex 70% livre · OpenCode $8")
+        check(try read().compactIndicatorParts[0].text == "$8")
+        check(try read().compactIndicatorParts[1].text == "70%")
+        check(try read().indicatorPresentation.text == "OpenCode $8 · Codex 70% livre")
         check(try read().indicatorPresentation.warning)
+        json["indicator"] = ["mode": "pinned", "toolIds": ["opencode", "codex"]]
+        check(try read().compactIndicatorParts[0].toolId == "opencode")
+        check(try read().compactIndicatorParts[1].toolId == "codex")
+        var hot = json
+        var hotTools = hot["tools"] as! [[String: Any]]
+        hotTools[0]["quotas"] = [["id": "primary", "label": "5 hours", "usedPercent": 90.0, "resetsAt": 2000000000, "windowMins": 300]]
+        hot["tools"] = hotTools
+        let hotUsage = try decoder.decode(Usage.self, from: JSONSerialization.data(withJSONObject: hot))
+        check(hotUsage.compactIndicatorParts[0].toolId == "codex")
         json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "opencode", "extra"]]
         check(try read().compactIndicatorParts.count == 2)
         json["indicator"] = ["mode": "pinned", "toolIds": ["codex", "missing"]]
