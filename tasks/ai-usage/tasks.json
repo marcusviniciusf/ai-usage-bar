@@ -30,12 +30,22 @@
       "id": "AIU-002",
       "title": "Release v1.0: signed app zip/DMG, notes, checksums",
       "description": "Package AI Usage.app (ad-hoc signed, with collector inside or documented install), produce zip/DMG, publish GitHub Release v1.0 with release notes and SHA-256, and document first-run Gatekeeper steps. Done when a fresh Mac can download and open the app without building from source.",
-      "status": "pending",
+      "status": "completed",
       "priority": "high",
       "phase": "A",
       "created_at": "2026-11-05",
       "updated_at": "2026-11-05",
-      "milestone": "P0"
+      "milestone": "P0",
+      "history": [
+        {
+          "at": "2026-11-05",
+          "from_status": "pending",
+          "to_status": "completed",
+          "evidence": "Release v1.0.0 published with universal zip (1.5 MB, sha256 3c25a1e3...); asset re-downloaded from GitHub and checksum verified."
+        }
+      ],
+      "completed_at": "2026-11-05",
+      "evidence": "Release v1.0.0 published with universal zip (1.5 MB, sha256 3c25a1e3...); asset re-downloaded from GitHub and checksum verified."
     },
     {
       "id": "AIU-003",
@@ -63,7 +73,7 @@
       "id": "AIU-005",
       "title": "Homebrew tap and cask for AI Usage",
       "description": "Create marcusviniciusf/homebrew-tap with a cask that installs AI Usage.app from the release zip, includes the collector in ~/.local/bin, and passes brew audit --cask. Done when 'brew install --cask marcusviniciusf/tap/ai-usage' works on a clean Mac and the README shows that as the primary install.",
-      "status": "pending",
+      "status": "completed",
       "priority": "high",
       "phase": "A",
       "milestone": "P0",
@@ -71,13 +81,23 @@
       "updated_at": "2026-11-05",
       "depends_on": [
         "AIU-002"
-      ]
+      ],
+      "history": [
+        {
+          "at": "2026-11-05",
+          "from_status": "pending",
+          "to_status": "completed",
+          "evidence": "Tap marcusviniciusf/homebrew-tap with Casks/ai-usage.rb; brew audit exit 0; brew install --cask tested on this Mac, app launched and rendered a snapshot."
+        }
+      ],
+      "completed_at": "2026-11-05",
+      "evidence": "Tap marcusviniciusf/homebrew-tap with Casks/ai-usage.rb; brew audit exit 0; brew install --cask tested on this Mac, app launched and rendered a snapshot."
     },
     {
       "id": "AIU-006",
       "title": "GitHub Actions CI: collector tests, Swift check, build",
       "description": "Workflow on macos-14 running python3 -m unittest discover -s tests -v, python3 tests/check_swift.py (with rtk optional, not required), and xcrun swiftc build. Upload the build log. Add the CI badge to README. Done when the workflow is green on main and a PR with a failing test turns red.",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "high",
       "phase": "A",
       "milestone": "P0",
@@ -88,30 +108,58 @@
           "at": "2026-11-05",
           "from_status": "pending",
           "to_status": "in_progress"
+        },
+        {
+          "at": "2026-11-05",
+          "from_status": "in_progress",
+          "to_status": "completed",
+          "evidence": "CI green on 1776165 (run 42074309943): collector tests, check_swift without rtk, universal build on macos-14."
         }
-      ]
+      ],
+      "completed_at": "2026-11-05",
+      "evidence": "CI green on 1776165 (run 42074309943): collector tests, check_swift without rtk, universal build on macos-14."
     },
     {
       "id": "AIU-007",
       "title": "README rewrite: GIF, install, comparison, proofs",
       "description": "Above the fold: one-line pitch, 20s GIF (menu bar -> panel -> expanded tool), brew install command, 3 bullets. Then comparison table vs CodexBar/TokenTracker/ccusage, honest 'what this is not', and a proofs block (binary size, cold start, memory, zero network). Done when a stranger understands the product and installs in under 60 seconds without reading further.",
-      "status": "pending",
+      "status": "completed",
       "priority": "high",
       "phase": "A",
       "milestone": "P0",
       "created_at": "2026-11-05",
-      "updated_at": "2026-11-05"
+      "updated_at": "2026-11-05",
+      "history": [
+        {
+          "at": "2026-11-05",
+          "from_status": "pending",
+          "to_status": "completed",
+          "evidence": "README rewritten: demo GIF, brew install, comparison table, proofs; all image/doc links checked; demo screenshots regenerated with DeepSeek."
+        }
+      ],
+      "completed_at": "2026-11-05",
+      "evidence": "README rewritten: demo GIF, brew install, comparison table, proofs; all image/doc links checked; demo screenshots regenerated with DeepSeek."
     },
     {
       "id": "AIU-008",
       "title": "Repo metadata: description, topics, social preview, changelog, templates",
       "description": "Update GitHub description and topics (deepseek, deepseek-harness, cost-tracking, token-usage), upload a 1280x640 social preview, add CHANGELOG.md (Keep a Changelog), issue templates and CONTRIBUTING.md. Done when repo cards and search for 'deepseek usage menubar' surface the project properly.",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium",
       "phase": "A",
       "milestone": "P0",
       "created_at": "2026-11-05",
-      "updated_at": "2026-11-05"
+      "updated_at": "2026-11-05",
+      "history": [
+        {
+          "at": "2026-11-05",
+          "from_status": "pending",
+          "to_status": "completed",
+          "evidence": "Description, five new topics, discussions on, CHANGELOG, CONTRIBUTING, issue templates, 1280x640 social preview generated. Social preview upload is manual (GitHub API has no endpoint)."
+        }
+      ],
+      "completed_at": "2026-11-05",
+      "evidence": "Description, five new topics, discussions on, CHANGELOG, CONTRIBUTING, issue templates, 1280x640 social preview generated. Social preview upload is manual (GitHub API has no endpoint)."
     },
     {
       "id": "AIU-009",
