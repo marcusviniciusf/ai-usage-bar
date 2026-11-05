@@ -124,7 +124,9 @@ enum L10n {
             "%@ over %@": "%@ acima de %@",
             "%@ left of %@": "%@ restam de %@",
             "At this pace, the limit is reached in ~%@": "No ritmo atual, limite em ~%@",
-            "%@/%@ days × %@ · avg %@/day · full %@": "%@/%@ dias × %@ · média %@/dia · cheio %@",
+            "%@ over pace (%@ so far)": "%@ acima do ritmo (%@ até agora)",
+            "%@ under pace (%@ so far)": "%@ abaixo do ritmo (%@ até agora)",
+            "At this rate: ~%@ of %@": "Nesse ritmo: ~%@ de %@",
             "%@/h now": "%@/h agora",
             "Costs use calendar months. Cursor plan usage follows its billing cycle.": "Os custos usam o mês calendário. O plano do Cursor segue o ciclo de cobrança.",
             "Subscription": "Assinatura",
@@ -224,7 +226,9 @@ enum L10n {
             "%@ over %@": "%@ por encima de %@",
             "%@ left of %@": "%@ restantes de %@",
             "At this pace, the limit is reached in ~%@": "Al ritmo actual, el límite llega en ~%@",
-            "%@/%@ days × %@ · avg %@/day · full %@": "%@/%@ días × %@ · media %@/día · completo %@",
+            "%@ over pace (%@ so far)": "%@ por encima del ritmo (%@ hasta ahora)",
+            "%@ under pace (%@ so far)": "%@ por debajo del ritmo (%@ hasta ahora)",
+            "At this rate: ~%@ of %@": "A este ritmo: ~%@ de %@",
             "%@/h now": "%@/h ahora",
             "Costs use calendar months. Cursor plan usage follows its billing cycle.": "Los costes usan el mes natural. El plan de Cursor sigue su ciclo de facturación.",
             "Subscription": "Suscripción",
@@ -1026,11 +1030,18 @@ struct SegmentedPill: View {
 struct UsageBar: View {
     let fraction: Double
     let color: Color
+    /// Where spending should be by now (fraction of the bar), drawn as a thin tick.
+    var marker: Double? = nil
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.white.opacity(0.10))
                 Capsule().fill(color).frame(width: geometry.size.width * min(max(fraction, 0), 1))
+                if let marker {
+                    Capsule().fill(Color.white.opacity(0.85))
+                        .frame(width: 2, height: 10)
+                        .offset(x: max(0, geometry.size.width * min(max(marker, 0), 1) - 1))
+                }
             }
         }.frame(height: 6)
         .accessibilityLabel(tr("Usage"))
@@ -1247,7 +1258,10 @@ struct ContentView: View {
         let days = window.days
         let allowed = (usage.globalBudget?.amount ?? 0) * Double(days.elapsed)
         let ratio = allowed > 0 ? total / allowed : 0
-        let isWarm = allowed > 0 && ratio >= 0.8
+        let fullBudget = (usage.globalBudget?.amount ?? 0) * Double(days.total)
+        let isPeriod = window != .today
+        let barFraction = isPeriod && fullBudget > 0 ? total / fullBudget : ratio
+        let isWarm = allowed > 0 && (ratio >= 0.8 || barFraction >= 1)
         let left = allowed - total
         let showsPace = window == .today && usage.rate > 0.5 && !usage.hasPartialCosts
         return Card(padding: 12, spacing: 7) {
@@ -1260,7 +1274,7 @@ struct ContentView: View {
                     .animation(.snappy, value: total)
                 Spacer()
                 if allowed > 0 {
-                    Text("\((ratio * 100).percentValue)%")
+                    Text("\((barFraction * 100).percentValue)%")
                         .font(.system(size: 11.5, weight: .bold, design: .rounded))
                         .foregroundStyle(isWarm ? Theme.bad : Theme.good)
                         .padding(.horizontal, 7).padding(.vertical, 2)
@@ -1272,9 +1286,10 @@ struct ContentView: View {
                 Text(tr("Partial usage: %@ unavailable", unavailable.joined(separator: ", ")))
                     .font(.system(size: 10.5)).foregroundStyle(Theme.bad)
             } else if allowed > 0 {
-                UsageBar(fraction: ratio, color: isWarm ? Theme.bad : Theme.good)
+                UsageBar(fraction: barFraction, color: isWarm ? Theme.bad : Theme.good,
+                         marker: isPeriod ? Double(days.elapsed) / Double(days.total) : nil)
                 HStack {
-                    Text(left < 0 ? tr("%@ over %@", (-left).dollars, allowed.shortDollars) : tr("%@ left of %@", left.dollars, allowed.shortDollars))
+                    Text(paceText(isPeriod: isPeriod, left: left, allowed: allowed, fullBudget: fullBudget))
                         .foregroundStyle(left < 0 ? Theme.bad : Theme.secondary)
                     Spacer()
                     if showsPace {
@@ -1287,7 +1302,7 @@ struct ContentView: View {
                         .foregroundStyle(left / usage.rate < 1 ? Theme.bad : Theme.secondary)
                 }
                 if window != .today {
-                    Text(tr("%@/%@ days × %@ · avg %@/day · full %@", String(days.elapsed), String(days.total), (usage.globalBudget?.amount ?? 0).shortDollars, (total / Double(days.elapsed)).shortDollars, ((usage.globalBudget?.amount ?? 0) * Double(days.total)).shortDollars))
+                    Text(tr("At this rate: ~%@ of %@", (total / Double(days.elapsed) * Double(days.total)).shortDollars, fullBudget.shortDollars))
                         .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
                 }
             } else if showsPace {
@@ -1296,6 +1311,14 @@ struct ContentView: View {
             }
         }
         .help(tr("Costs use calendar months. Cursor plan usage follows its billing cycle."))
+    }
+
+    private func paceText(isPeriod: Bool, left: Double, allowed: Double, fullBudget: Double) -> String {
+        guard isPeriod else {
+            return left < 0 ? tr("%@ over %@", (-left).dollars, allowed.shortDollars) : tr("%@ left of %@", left.dollars, allowed.shortDollars)
+        }
+        return left < 0 ? tr("%@ over pace (%@ so far)", (-left).dollars, allowed.shortDollars)
+                        : tr("%@ under pace (%@ so far)", left.dollars, allowed.shortDollars)
     }
 
     // MARK: Tools
