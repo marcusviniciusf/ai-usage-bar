@@ -5,12 +5,12 @@ Updated: 2026-11-04 22:20 — America/Sao_Paulo
 ## Current work
 - Task: AIU-001 `tasks/ai-usage/tasks.json` — add DeepSeek spend as a cost tool.
 - Objective: done; collector, Swift cosmetics, docs and tests implemented and validated.
-- State: implemented, tested, built, installed locally; not committed yet at the time this snapshot was written.
+- State: implemented, tested, built, installed locally, committed and pushed to `origin/main`.
 
 ## Code and environment
 - Branch: `main`; local changes: `bin/ai-usage`, `main.swift`, `tests/test_collector.py`, `README.md`, `docs/REFERENCE.md`, new `tasks/`, `AGENTS.md`, this file.
 - Services: menu bar app installed at `~/Applications/AI Usage.app` (relaunched by `./install.sh`); collector copied to `~/.local/bin/ai-usage`.
-- Publication: none; no push, no release.
+- Publication: `96c73e0` pushed to `origin/main` on 2026-11-04; no release.
 
 ## Validation
 - 2026-11-04: `python3 -m unittest discover -s tests -v` — 24 tests OK, including new DeepSeek pricing, folding, fork-prefix, zstd and unpriced-model cases.
