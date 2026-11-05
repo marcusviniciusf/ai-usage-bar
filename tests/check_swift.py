@@ -232,5 +232,6 @@ with tempfile.TemporaryDirectory(prefix="ai-usage-swift-") as folder:
         path = folder / f"{name}.swift"
         path.write_text(source.split("\n@main\nstruct AIUsageApp:", 1)[0] + test)
         binary = folder / name
-        swiftc("-parse-as-library", str(path), "-o", str(binary))
+        # Swift 5 mode: the legacy snapshot predates Swift 6 concurrency checking.
+        swiftc("-swift-version", "5", "-parse-as-library", str(path), "-o", str(binary))
         subprocess.run([str(binary), str(fixture)], check=True)
