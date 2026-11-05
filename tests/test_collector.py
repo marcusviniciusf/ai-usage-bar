@@ -19,6 +19,12 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 collector = importlib.util.module_from_spec(spec)
 loader.exec_module(collector)
 
+try:
+    from compression import zstd as _zstd  # noqa: F401
+    HAS_STDLIB_ZSTD = True
+except ImportError:
+    HAS_STDLIB_ZSTD = False
+
 
 class CollectorTests(unittest.TestCase):
     def test_legacy_budget_preserved_and_explicit_disable_wins(self):
@@ -363,7 +369,7 @@ for line in sys.stdin:
         self.assertAlmostEqual(result["today"], collector.deepseek_cost(
             {"inputTokens": 2_000_000}, "deepseek-flash", now_ms))
 
-    @unittest.skipUnless(importlib.util.find_spec("compression.zstd"), "needs Python 3.14+ stdlib zstd")
+    @unittest.skipUnless(HAS_STDLIB_ZSTD, "needs Python 3.14+ stdlib zstd")
     def test_deepseek_reads_compressed_session_logs(self):
         from compression import zstd
         now_ms = int(time.time() * 1000) - 60_000
