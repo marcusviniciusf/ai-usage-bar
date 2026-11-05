@@ -25,6 +25,199 @@
       ],
       "completed_at": "2026-11-05",
       "evidence": "python3 -m unittest discover -s tests (24 tests OK); python3 tests/check_swift.py OK; ./install.sh reports DeepSeek today $1.05 ok; snapshot /tmp/ai-usage-deepseek.png shows the row."
+    },
+    {
+      "id": "AIU-002",
+      "title": "Release v1.0: signed app zip/DMG, notes, checksums",
+      "description": "Package AI Usage.app (ad-hoc signed, with collector inside or documented install), produce zip/DMG, publish GitHub Release v1.0 with release notes and SHA-256, and document first-run Gatekeeper steps. Done when a fresh Mac can download and open the app without building from source.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05",
+      "milestone": "P0"
+    },
+    {
+      "id": "AIU-003",
+      "title": "Fix session row truncation and verbose cost label",
+      "description": "Session/model rows truncate the name into the cost column and print 'Cost under $0.1' inline. Give the cost a fixed trailing width, use a short '<$0.1' form inside rows, and keep the full phrase for the hero. Done when a 15-session list with long titles renders names and costs without collision in pt/en/es snapshots.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05",
+      "milestone": "P1"
+    },
+    {
+      "id": "AIU-004",
+      "title": "Split main.swift into modules",
+      "description": "1798-line main.swift becomes Models, Store/Refresh, CollectorClient, DesignSystem (theme/formatters), Views per section and L10n tables, keeping zero third-party deps. Done when check_swift.py and build.sh pass unchanged and no file exceeds ~500 lines.",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05",
+      "milestone": "P2"
+    },
+    {
+      "id": "AIU-005",
+      "title": "Homebrew tap and cask for AI Usage",
+      "description": "Create marcusviniciusf/homebrew-tap with a cask that installs AI Usage.app from the release zip, includes the collector in ~/.local/bin, and passes brew audit --cask. Done when 'brew install --cask marcusviniciusf/tap/ai-usage' works on a clean Mac and the README shows that as the primary install.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "milestone": "P0",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05",
+      "depends_on": [
+        "AIU-002"
+      ]
+    },
+    {
+      "id": "AIU-006",
+      "title": "GitHub Actions CI: collector tests, Swift check, build",
+      "description": "Workflow on macos-14 running python3 -m unittest discover -s tests -v, python3 tests/check_swift.py (with rtk optional, not required), and xcrun swiftc build. Upload the build log. Add the CI badge to README. Done when the workflow is green on main and a PR with a failing test turns red.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "milestone": "P0",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-007",
+      "title": "README rewrite: GIF, install, comparison, proofs",
+      "description": "Above the fold: one-line pitch, 20s GIF (menu bar -> panel -> expanded tool), brew install command, 3 bullets. Then comparison table vs CodexBar/TokenTracker/ccusage, honest 'what this is not', and a proofs block (binary size, cold start, memory, zero network). Done when a stranger understands the product and installs in under 60 seconds without reading further.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "milestone": "P0",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-008",
+      "title": "Repo metadata: description, topics, social preview, changelog, templates",
+      "description": "Update GitHub description and topics (deepseek, deepseek-harness, cost-tracking, token-usage), upload a 1280x640 social preview, add CHANGELOG.md (Keep a Changelog), issue templates and CONTRIBUTING.md. Done when repo cards and search for 'deepseek usage menubar' surface the project properly.",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "milestone": "P0",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-009",
+      "title": "Window-aware tool subtitle instead of always-on $/h",
+      "description": "DeepSeek shows '$0.6/h' even in Month, where it means nothing. Subtitle should describe the selected window: budget share, average per day, or delta; show the live rate only on Today. Done when Month and Week snapshots never show an hourly rate and each cost row explains its window.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "milestone": "P1",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-010",
+      "title": "Quota row: one-line summary, forecast on hover, calmer colors",
+      "description": "Codex currently renders a two-line orange forecast in the collapsed row. Collapse quotas to one line (5h 71% . wk 68%), move the forecast to the expanded detail and tooltip, and reserve warning/red for >=80% or critical forecasts. Done when the collapsed panel shows all tools without wrapping and the warning color appears only when it matters.",
+      "status": "pending",
+      "priority": "high",
+      "phase": "A",
+      "milestone": "P1",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-011",
+      "title": "Hero delta vs previous period",
+      "description": "Add '+18% vs yesterday', '+12% vs last week', '+9% vs previous month' under the hero total, computed from daily history with a '-' fallback when history is short. Done when Today/Week/Month each show a signed comparison in all three languages.",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "milestone": "P1",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-012",
+      "title": "Inline budget bar and consistent rounding",
+      "description": "Show a thin budget bar in collapsed cost rows when a budget exists, and make displayed totals equal the sum of displayed rows (round per row, derive total, or show 2 decimals under $10). Done when 1.2 + 1.0 always reads as the total shown and budgets are visible without expanding.",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "milestone": "P1",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-013",
+      "title": "CSV/JSON export of daily usage",
+      "description": "Export date, tool, model, tokens, cost for the last 14 days from the settings menu, saving a CSV (and JSON) via NSSavePanel. Done when the file opens in Numbers and totals match the panel.",
+      "status": "pending",
+      "priority": "low",
+      "phase": "A",
+      "milestone": "P1",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-014",
+      "title": "Copy and accessibility pass: Weekly label, contrast, labels, shortcuts",
+      "description": "Replace 'Wk' with 'Weekly' in forecast copy, raise 9pt section contrast, add accessibilityLabel to every icon-only button, and add keyboard shortcuts (cmd-R refresh, cmd-, settings, cmd-Q quit). Done when VoiceOver reads every control and the panel is fully operable from the keyboard.",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "milestone": "P1",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-015",
+      "title": "Swift XCTest suite for forecasts, windows and formatting",
+      "description": "Add an XCTest target covering Window.days, Tool.Quota.forecast, duration/percent/dollar formatting and indicator selection, runnable with swift test. Done when the suite passes in CI and covers the forecast boundary cases (elapsed too short, over 100%, weekly).",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "milestone": "P2",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05",
+      "depends_on": [
+        "AIU-004"
+      ]
+    },
+    {
+      "id": "AIU-016",
+      "title": "DeepSeek session scan cache by mtime/size",
+      "description": "Cache parsed per-session totals in ~/Library/Caches/ai-usage-deepseek.json keyed by path, mtime and size, like the Cursor event cache, so refresh time stays flat as ~/.dsh/sessions grows. Done when a second refresh on unchanged logs avoids decompression and the collector still reports the same totals.",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "milestone": "P2",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-017",
+      "title": "DeepSeek historical price revisions and Chinese holidays",
+      "description": "Price samples at the rate revision in effect at their timestamp (e.g. the 2026-09-10 flash series change) and treat Chinese public holidays as off-peak, or document the approximation in the UI. Done when a fixture spanning the revision prices correctly and the docs state the holiday policy.",
+      "status": "pending",
+      "priority": "medium",
+      "phase": "A",
+      "milestone": "P2",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
+    },
+    {
+      "id": "AIU-018",
+      "title": "Collector contract doc and demo fixture mode",
+      "description": "Document the JSON contract (fields, codex quota shape, error semantics, backward compatibility) in docs/COLLECTOR.md and add an AI_USAGE_DEMO fixture so screenshots and newcomers render without real logs. Done when scripts/render_demo_screenshots.py uses the fixture and the contract doc matches tests.",
+      "status": "pending",
+      "priority": "low",
+      "phase": "A",
+      "milestone": "P2",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05"
     }
   ]
 }
