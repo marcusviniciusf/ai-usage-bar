@@ -213,6 +213,17 @@ new_test = common + '''
 }
 '''
 
+def swiftc(*arguments):
+    """Use the local rtk proxy when present; CI runs plain xcrun."""
+    for command in (["rtk", "proxy", "xcrun", "swiftc"], ["xcrun", "swiftc"]):
+        try:
+            return subprocess.run([*command, *arguments], check=True)
+        except (OSError, subprocess.CalledProcessError) as err:
+            if isinstance(err, subprocess.CalledProcessError) or command[0] == "xcrun":
+                raise
+    raise SystemExit("xcrun swiftc not found")
+
+
 with tempfile.TemporaryDirectory(prefix="ai-usage-swift-") as folder:
     folder = Path(folder)
     fixture = folder / "usage.json"
@@ -221,5 +232,5 @@ with tempfile.TemporaryDirectory(prefix="ai-usage-swift-") as folder:
         path = folder / f"{name}.swift"
         path.write_text(source.split("\n@main\nstruct AIUsageApp:", 1)[0] + test)
         binary = folder / name
-        subprocess.run(["rtk", "proxy", "xcrun", "swiftc", "-parse-as-library", str(path), "-o", str(binary)], check=True)
+        swiftc("-parse-as-library", str(path), "-o", str(binary))
         subprocess.run([str(binary), str(fixture)], check=True)
