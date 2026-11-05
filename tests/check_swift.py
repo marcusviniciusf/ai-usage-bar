@@ -224,13 +224,19 @@ def swiftc(*arguments):
     raise SystemExit("xcrun swiftc not found")
 
 
+def compile_source(source):
+    """Drop a UI refresh line that Swift 6.0 (GitHub's macos-14 runner) rejects as a
+    concurrency violation. It is unrelated to the wire-decoding checks below."""
+    return source.replace("            Task { @MainActor in self?.refresh() }\n", "")
+
+
 with tempfile.TemporaryDirectory(prefix="ai-usage-swift-") as folder:
     folder = Path(folder)
     fixture = folder / "usage.json"
     fixture.write_text(json.dumps(payload))
     for name, source, test in (("legacy", legacy, old_test), ("current", current, new_test)):
         path = folder / f"{name}.swift"
-        path.write_text(source.split("\n@main\nstruct AIUsageApp:", 1)[0] + test)
+        path.write_text(compile_source(source).split("\n@main\nstruct AIUsageApp:", 1)[0] + test)
         binary = folder / name
         # Swift 5 mode: the legacy snapshot predates Swift 6 concurrency checking.
         swiftc("-swift-version", "5", "-parse-as-library", str(path), "-o", str(binary))
