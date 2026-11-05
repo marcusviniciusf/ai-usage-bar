@@ -174,6 +174,8 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual([s[0] for s in collector.detected_sources()], ["opencode"])
             Path(home, "claude/projects").mkdir(parents=True)
             self.assertEqual([s[0] for s in collector.detected_sources()], ["claude", "opencode"])
+            Path(home, ".dsh/sessions").mkdir(parents=True)
+            self.assertEqual([s[0] for s in collector.detected_sources()], ["claude", "opencode", "deepseek"])
 
     def test_tool_budgets_are_independent_and_optional(self):
         with tempfile.TemporaryDirectory() as config:
@@ -299,6 +301,94 @@ for line in sys.stdin:
         with patch.object(collector.subprocess, "run", side_effect=FileNotFoundError):
             with self.assertRaisesRegex(RuntimeError, "bun add -g ccusage"):
                 collector.ccusage_json("claude", "daily")
+
+    def test_deepseek_prices_peak_hours_and_aliases(self):
+        usage = {"inputTokens": 1_000_000, "cacheReadTokens": 1_000_000, "outputTokens": 1_000_000}
+        monday_peak = collector.datetime(2026, 1, 5, 2, tzinfo=collector.timezone.utc).timestamp() * 1000
+        monday_off_peak = collector.datetime(2026, 1, 5, 12, tzinfo=collector.timezone.utc).timestamp() * 1000
+        saturday = collector.datetime(2026, 1, 10, 2, tzinfo=collector.timezone.utc).timestamp() * 1000
+        self.assertAlmostEqual(collector.deepseek_cost(usage, "deepseek-flash", monday_off_peak), 0.753)
+        self.assertAlmostEqual(collector.deepseek_cost(usage, "deepseek-flash", monday_peak), 1.506)
+        self.assertAlmostEqual(collector.deepseek_cost(usage, "deepseek-v4-flash", monday_peak), 1.506)
+        # Weekends are always off-peak, even inside a peak window.
+        self.assertAlmostEqual(collector.deepseek_cost(usage, "deepseek-flash", saturday), 0.753)
+        self.assertIsNone(collector.deepseek_cost(usage, "mystery-model", monday_peak))
+
+    def test_deepseek_folds_sessions_into_windows_models_and_chats(self):
+        now_ms = int(time.time() * 1000) - 60_000
+        with tempfile.TemporaryDirectory() as home, patch.object(collector, "HOME", home):
+            def sample(turn, step, model, **usage):
+                return {"type": "assistant/message", "seq": 1, "time": now_ms,
+                        "data": {"turn": turn, "step": step,
+                                 "usage": {"inputTokens": 0, "outputTokens": 0, "cacheReadTokens": 0,
+                                           "cacheWriteTokens": 0, **usage},
+                                 "message": {"source": {"kind": "model", "model": model}}}}
+            first = sample(1, 1, "deepseek-flash", inputTokens=2_000_000, outputTokens=500_000)
+            second = sample(1, 1, "deepseek-v4-pro", cacheReadTokens=3_000_000)
+            collector_session = {"type": "session", "version": 4, "id": "s", "cwd": "/tmp"}
+            for project, session_id, title, records in [
+                    ("--alpha--", "session-a", "Alpha", [collector_session,
+                                                         {"type": "session/title", "data": {"title": "Alpha"}}, first]),
+                    ("--beta--", "session-b", "Beta", [collector_session,
+                                                       {"type": "session/title", "data": {"title": "Beta"}}, second])]:
+                folder = Path(home, ".dsh/sessions", project, session_id)
+                folder.mkdir(parents=True)
+                (folder / "session.v4.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n")
+            result = collector.deepseek()
+        expected_first = collector.deepseek_cost(first["data"]["usage"], "deepseek-flash", now_ms)
+        expected_second = collector.deepseek_cost(second["data"]["usage"], "deepseek-v4-pro", now_ms)
+        self.assertAlmostEqual(result["today"], expected_first + expected_second)
+        self.assertAlmostEqual(result["week"], expected_first + expected_second)
+        self.assertAlmostEqual(result["month"], expected_first + expected_second)
+        self.assertAlmostEqual(result["rate"], expected_first + expected_second)
+        self.assertEqual([c["name"] for c in result["chats"]], ["Alpha", "Beta"])
+        self.assertEqual([m["name"] for m in result["models"]], ["deepseek-flash", "deepseek-v4-pro"])
+
+    def test_deepseek_skips_fork_prefix_and_keeps_last_sample_per_step(self):
+        now_ms = int(time.time() * 1000) - 60_000
+        def sample(moment, tokens):
+            return {"type": "assistant/message", "seq": 1, "time": moment,
+                    "data": {"turn": 1, "step": 1,
+                             "usage": {"inputTokens": tokens, "outputTokens": 0, "cacheReadTokens": 0},
+                             "message": {"source": {"kind": "model", "model": "deepseek-flash"}}}}
+        records = [{"type": "session", "version": 4, "id": "s", "inheritedEventCount": 1},
+                   sample(now_ms, 50_000_000),          # inherited from the fork's parent: never billed twice
+                   sample(now_ms, 1_000_000),           # own step, superseded below
+                   sample(now_ms, 2_000_000)]
+        with tempfile.TemporaryDirectory() as home, patch.object(collector, "HOME", home):
+            folder = Path(home, ".dsh/sessions/--alpha--/session-a")
+            folder.mkdir(parents=True)
+            (folder / "session.v4.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n")
+            result = collector.deepseek()
+        self.assertAlmostEqual(result["today"], collector.deepseek_cost(
+            {"inputTokens": 2_000_000}, "deepseek-flash", now_ms))
+
+    @unittest.skipUnless(importlib.util.find_spec("compression.zstd"), "needs Python 3.14+ stdlib zstd")
+    def test_deepseek_reads_compressed_session_logs(self):
+        from compression import zstd
+        now_ms = int(time.time() * 1000) - 60_000
+        record = {"type": "assistant/message", "seq": 1, "time": now_ms,
+                  "data": {"turn": 1, "step": 1, "usage": {"outputTokens": 1_000_000},
+                           "message": {"source": {"kind": "model", "model": "deepseek-flash"}}}}
+        with tempfile.TemporaryDirectory() as home, patch.object(collector, "HOME", home):
+            folder = Path(home, ".dsh/sessions/--alpha--/session-a")
+            folder.mkdir(parents=True)
+            (folder / "session.v4.jsonl.zstd").write_bytes(zstd.compress(json.dumps(record).encode()))
+            result = collector.deepseek()
+        self.assertAlmostEqual(result["today"], collector.deepseek_cost(
+            {"outputTokens": 1_000_000}, "deepseek-flash", now_ms))
+
+    def test_deepseek_reports_an_unpriced_model(self):
+        now_ms = int(time.time() * 1000) - 60_000
+        record = {"type": "assistant/message", "seq": 1, "time": now_ms,
+                  "data": {"turn": 1, "step": 1, "usage": {"outputTokens": 10},
+                           "message": {"source": {"kind": "model", "model": "mystery-model"}}}}
+        with tempfile.TemporaryDirectory() as home, patch.object(collector, "HOME", home):
+            folder = Path(home, ".dsh/sessions/--alpha--/session-a")
+            folder.mkdir(parents=True)
+            (folder / "session.v4.jsonl").write_text(json.dumps(record) + "\n")
+            with self.assertRaisesRegex(RuntimeError, "No DeepSeek price for mystery-model"):
+                collector.deepseek()
 
 
 if __name__ == "__main__":

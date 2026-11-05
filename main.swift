@@ -530,6 +530,7 @@ struct Tool: Codable, Identifiable {
         case "cursor": [Color(hex: 0x7C8CFF), Color(hex: 0xA46BFF)]
         case "claude": [Color(hex: 0xFF9A6B), Color(hex: 0xE0603F)]
         case "codex": [Color(hex: 0xA6B8FF), Color(hex: 0x798DED)]
+        case "deepseek": [Color(hex: 0x7E95FF), Color(hex: 0x4D6BFE)]
         default: [Color(hex: 0x4BE3A4), Color(hex: 0x1FB57E)]
         }
     }
@@ -542,6 +543,7 @@ struct Tool: Codable, Identifiable {
         case "cursor": "cursorarrow.rays"
         case "claude": "asterisk"
         case "codex": "chevron.left.forwardslash.chevron.right"
+        case "deepseek": "brain.head.profile"
         default: "terminal"
         }
     }
@@ -1723,6 +1725,7 @@ struct ToolAppIcon: View {
         case "opencode": names = ["OpenCode"]
         case "cursor": names = ["Cursor"]
         case "claude": names = ["Claude"]
+        case "deepseek": names = ["DeepSeek Harness", "DeepSeek"]
         default: return nil
         }
         let roots = ["/Applications", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path]

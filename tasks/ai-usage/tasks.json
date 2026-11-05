@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "project": "AI Usage menu bar app",
+  "description": "",
+  "prefix": "AIU",
+  "repo": "ai-usage-bar",
+  "updated_at": "2026-11-05",
+  "tasks": [
+    {
+      "id": "AIU-001",
+      "title": "Add DeepSeek spend (local DSH sessions)",
+      "description": "New cost tool 'deepseek' in bin/ai-usage: fold ~/.dsh/sessions/*/session.v*.jsonl(.zstd) assistant/message usage, price deepseek-flash / deepseek-v4-pro at official peak/off-peak rates, expose today/week/month, 14-day history, top models and sessions, last-hour rate; detect when ~/.dsh/sessions exists. Swift: palette, fallback symbol and app icon for the tool. Docs + tests. Done when python3 -m unittest discover -s tests -v and ./build.sh pass and the collector emits real non-zero DeepSeek cost from this Mac's session logs.",
+      "status": "completed",
+      "priority": "medium",
+      "phase": "A",
+      "created_at": "2026-11-05",
+      "updated_at": "2026-11-05",
+      "history": [
+        {
+          "at": "2026-11-05",
+          "from_status": "pending",
+          "to_status": "completed",
+          "evidence": "python3 -m unittest discover -s tests (24 tests OK); python3 tests/check_swift.py OK; ./install.sh reports DeepSeek today $1.05 ok; snapshot /tmp/ai-usage-deepseek.png shows the row."
+        }
+      ],
+      "completed_at": "2026-11-05",
+      "evidence": "python3 -m unittest discover -s tests (24 tests OK); python3 tests/check_swift.py OK; ./install.sh reports DeepSeek today $1.05 ok; snapshot /tmp/ai-usage-deepseek.png shows the row."
+    }
+  ]
+}
