@@ -6,7 +6,19 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-legacy = subprocess.check_output(["rtk", "proxy", "git", "show", "2bfe2d7:main.swift"], cwd=ROOT, text=True)
+
+
+def git_show(path):
+    """`rtk proxy` on developer machines, plain git in CI and for contributors without rtk."""
+    for command in (["rtk", "proxy", "git", "show", path], ["git", "show", path]):
+        try:
+            return subprocess.check_output(command, cwd=ROOT, text=True, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            continue
+    raise SystemExit(f"Cannot read {path} from git history. Clone with full history (fetch-depth 0).")
+
+
+legacy = git_show("2bfe2d7:main.swift")
 current = (ROOT / "main.swift").read_text()
 tool = {"id": "opencode", "name": "OpenCode", "error": None, "mode": "cost", "today": 8,
         "week": 14, "month": 20, "monthLabel": "", "daily": [], "models": [],

@@ -77,12 +77,19 @@
       "id": "AIU-006",
       "title": "GitHub Actions CI: collector tests, Swift check, build",
       "description": "Workflow on macos-14 running python3 -m unittest discover -s tests -v, python3 tests/check_swift.py (with rtk optional, not required), and xcrun swiftc build. Upload the build log. Add the CI badge to README. Done when the workflow is green on main and a PR with a failing test turns red.",
-      "status": "pending",
+      "status": "in_progress",
       "priority": "high",
       "phase": "A",
       "milestone": "P0",
       "created_at": "2026-11-05",
-      "updated_at": "2026-11-05"
+      "updated_at": "2026-11-05",
+      "history": [
+        {
+          "at": "2026-11-05",
+          "from_status": "pending",
+          "to_status": "in_progress"
+        }
+      ]
     },
     {
       "id": "AIU-007",

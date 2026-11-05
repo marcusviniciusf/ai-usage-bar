@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # check_swift.py compiles the legacy model from commit 2bfe2d7.
+          fetch-depth: 0
+      - name: Collector tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Swift wire compatibility
+        run: python3 tests/check_swift.py
+      - name: Build universal app
+        run: ./scripts/build_app.sh "$RUNNER_TEMP/build"

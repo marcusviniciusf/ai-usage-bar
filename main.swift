@@ -597,8 +597,15 @@ final class Store: ObservableObject {
     @Published var notificationWarning: String?
     @Published var language: AppLanguage = L10n.preference
 
-    private let collector = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".local/bin/ai-usage").path
+    /// Prefer the collector shipped inside the app bundle; keep ~/.local/bin for dev builds.
+    private var collector: String {
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("ai-usage").path,
+           FileManager.default.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/ai-usage").path
+    }
     private let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("ai-usage.json")
     private var timer: Timer?
