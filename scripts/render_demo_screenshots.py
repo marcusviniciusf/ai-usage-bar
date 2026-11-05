@@ -46,6 +46,13 @@ def demo_payload(now: datetime) -> dict:
         [0.25, 0.85, 1.20, 0.40, 1.55, 0.75, 0.90, 1.80, 2.10, 0.65, 1.20, 1.95, 1.10, 3.10],
         [("demo/model-a", 1.82), ("demo/model-b", 1.28)],
         [("Demo: implement settings", 1.82, "demo/model-a"), ("Demo: polish panel", 1.28, "demo/model-b")])
+    deepseek = cost_tool(
+        "deepseek", "DeepSeek", 4.20, 14.60, 41.30,
+        [1.2, 2.4, 0.9, 3.1, 2.7, 0.4, 0.2, 1.8, 3.6, 2.2, 1.9, 3.8, 2.5, 4.2],
+        [("deepseek-flash", 3.10), ("deepseek-v4-pro", 1.10)],
+        [("Demo: price the DeepSeek sessions", 2.40, "deepseek-flash"),
+         ("Demo: add budget alerts", 1.10, "deepseek-v4-pro")],
+        rate=0.9)
     codex = {
         "id": "codex", "name": "Codex", "error": None,
         "today": 0, "week": 0, "month": 0, "monthLabel": now.strftime("%b"),
@@ -61,11 +68,11 @@ def demo_payload(now: datetime) -> dict:
     }
     return {
         "updatedAt": now.isoformat(timespec="seconds"),
-        "budget": 20, "globalBudget": {"amount": 20, "period": "daily"},
+        "budget": 40, "globalBudget": {"amount": 40, "period": "daily"},
         "indicator": {"mode": "pinned", "toolIds": ["codex", "claude"]},
         "availableTools": [{"id": t["id"], "name": t["name"], "enabled": True}
-                           for t in (codex, cursor, claude, open_code)],
-        "tools": [codex, cursor, claude, open_code],
+                           for t in (codex, cursor, claude, open_code, deepseek)],
+        "tools": [codex, cursor, claude, open_code, deepseek],
     }
 
 
@@ -86,6 +93,8 @@ def main() -> None:
             ("--snapshot", "ai-usage-codex-quota.png", ["Today", "codex"]),
             ("--snapshot", "ai-usage-claude-costs.png", ["Today", "claude"]),
             ("--snapshot", "ai-usage-opencode-costs.png", ["Today", "opencode"]),
+            ("--snapshot", "ai-usage-deepseek-costs.png", ["Today", "deepseek"]),
+            ("--snapshot", "ai-usage-month.png", ["Month"]),
         ]
         for flag, filename, view_args in captures:
             subprocess.run(

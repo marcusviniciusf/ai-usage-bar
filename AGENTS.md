@@ -7,6 +7,9 @@ macOS 14+ menu bar app that shows AI tool spend and subscription quota. One Swif
 - `main.swift` — app, panel, menu bar indicator, preferences, notifications. Built by `build.sh` into `~/Applications/AI Usage.app`.
 - `bin/ai-usage` — collector the app runs as a separate process per tool; prints one JSON payload. Also the `ai-usage` CLI for preferences.
 - `bin/cursor-spend` — Cursor dashboard helper the collector loads.
+- `scripts/build_app.sh` — builds the universal app bundle with both collectors inside. `build.sh` installs it; `scripts/package_release.sh` produces the release zip and checksum.
+- `scripts/render_demo_screenshots.py` / `scripts/render_social_preview.py` — regenerate README and social media from fictional data (the second needs Pillow).
+- `.github/workflows/ci.yml` — collector tests, Swift wire check and universal build on `macos-14`.
 - `tests/` — collector unit tests (`test_collector.py`) and `check_swift.py`, which compiles the real app models against old and current payloads.
 - `docs/REFERENCE.md` — behaviour users care about (detection, budgets, modes, flags). `docs/STATUS.md` — current validated state.
 - `tasks/ai-usage/tasks.json` — local backlog (`tasks list`, `tasks new ai-usage`, `tasks done`).
@@ -15,15 +18,18 @@ macOS 14+ menu bar app that shows AI tool spend and subscription quota. One Swif
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 tests/check_swift.py          # needs rtk and the legacy commit 2bfe2d7
+python3 tests/check_swift.py          # compiles old and current wire models (rtk optional)
 ./build.sh                            # compile, install, relaunch the app
+./scripts/build_app.sh /tmp/out       # bundle only, no install (CI uses this)
+./scripts/package_release.sh 1.0.0    # dist/ zip + SHA-256 for a GitHub Release
 ./install.sh                          # collectors to ~/.local/bin, ccusage, then build
 ~/Applications/AI\ Usage.app/Contents/MacOS/AIUsage --snapshot /tmp/out.png Today
 ```
 
 ## Constraints
 
-- The app launches the collector with `/usr/bin/python3` (3.9) and `~/.local/bin/ai-usage`: keep the collector stdlib-only and 3.9-compatible.
+- The app launches the collector with `/usr/bin/python3` (3.9) and prefers the copy inside its own bundle; `~/.local/bin/ai-usage` is only a dev fallback.
+- Release flow: bump `CHANGELOG.md`, tag `vX.Y.Z`, run `scripts/package_release.sh X.Y.Z`, `gh release create`, then update `version`/`sha256` in the cask at `marcusviniciusf/homebrew-tap`. Ad-hoc signing is intentional; there is no Developer ID.
 - Reads must stay read-only towards provider accounts: never start a turn, change auth, reset credits, or spend money.
 - Costs from local logs are API list-price estimates, never invoices or account balances; label them that way in UI and docs.
 - Nothing leaves the Mac except calls to the providers' own endpoints (Cursor dashboard, `codex app-server`, DeepSeek logs stay local).
