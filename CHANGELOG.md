@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Claude Code 5-hour and weekly subscription quota with forecasts, shown when a
+  Claude Code subscription sign-in exists (not yet verified against a live account).
+- One-time explanation before the Keychain prompt for Cursor, with a Skip Cursor option.
+
+- Tool specs: add any JSONL or SQLite based harness with a JSON file in
+  `~/.config/ai-usage/tools/` (see `docs/TOOL_SPECS.md`).
+
+### Changed
+- Claude Code and OpenCode spend is read directly from local logs and the OpenCode
+  database. `ccusage`, Node and bun are no longer needed.
+- Month and Week views show spend against the full period budget with a pace marker.
+
 ## [1.0.0] - 2026-11-05
 
 First public release.

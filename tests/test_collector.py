@@ -95,36 +95,163 @@ class CollectorTests(unittest.TestCase):
             self.assertNotIn(b"Traceback", result.stderr)
             self.assertEqual(path.read_bytes(), original)
 
-    def test_opencode_excludes_free_costs_from_all_windows_and_history(self):
-        days = [
-            {"date": collector.today.isoformat(), "totalCost": 64.47, "modelBreakdowns": [
-                {"modelName": "nemotron-3.5-super-vl-free", "cost": 55.39},
-                {"modelName": "provider/deepseek:FREE", "cost": 1.70},
-                {"modelName": "deepseek-v4.1-flash", "cost": 7.38}]},
-        ]
-        def report(agent, kind, *args):
-            return {"daily": days} if kind == "daily" else {"sessions": []}
-        with patch.object(collector, "ccusage_json", side_effect=report):
-            result = collector.ccusage("opencode")
+    def _opencode_db(self, data_home, legacy=(), current=()):
+        path = Path(data_home, "opencode/opencode.db")
+        path.parent.mkdir(parents=True)
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
+        db.execute("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)")
+        for i, (session, model, cost, created) in enumerate(legacy):
+            db.execute("INSERT INTO message VALUES (?,?,?,?,?)", (f"m{i}", session, created, created,
+                       json.dumps({"role": "assistant", "modelID": model, "cost": cost, "time": {"created": created}})))
+        for i, (session, model, cost, created) in enumerate(current):
+            db.execute("INSERT INTO session_message VALUES (?,?,?,?,?,?,?)", (f"s{i}", session, "assistant", i, created, created,
+                       json.dumps({"model": {"id": model}, "cost": cost, "time": {"created": created}})))
+        db.commit()
+        db.close()
+
+    def test_opencode_reads_both_schemas_and_excludes_free_models(self):
+        now = int(time.time() * 1000)
+        with tempfile.TemporaryDirectory() as data_home:
+            self._opencode_db(data_home,
+                              legacy=[("a", "nemotron-super-free", 55.39, now), ("a", "deepseek-v4.1-flash", 3.0, now)],
+                              current=[("b", "provider/deepseek:FREE", 1.7, now), ("b", "deepseek-v4.1-flash", 4.38, now)])
+            with patch.object(collector, "DATA_HOME", data_home):
+                result = collector.opencode()
         for period in ("today", "week", "month"):
             self.assertAlmostEqual(result[period], 7.38)
         self.assertEqual(result["models"], [{"name": "deepseek-v4.1-flash", "cost": 7.38}])
         self.assertEqual(result["daily"][-1]["cost"], 7.38)
+        self.assertEqual([(c["cost"], c["model"]) for c in result["chats"]], [(4.38, "deepseek-v4.1-flash"), (3.0, "deepseek-v4.1-flash")])
         self.assertEqual(result["rate"], 0)
 
-    def test_mixed_sessions_are_ranked_by_non_free_costs(self):
-        def session(key, models):
-            return {"sessionId": key, "totalCost": sum(m["cost"] for m in models), "modelBreakdowns": models}
-        sessions = [
-            session("free-only", [{"modelName": "provider/large-free", "cost": 100}]),
-            session("mixed", [{"modelName": "large-free", "cost": 80}, {"modelName": "paid-small", "cost": 2}]),
-            session("paid", [{"modelName": "paid-model", "cost": 3}]),
-        ]
-        with patch.object(collector, "ccusage_json", return_value={"sessions": sessions}), \
-                patch.object(collector, "opencode_titles", return_value={"mixed": "Mixed", "paid": "Paid"}):
-            result = collector.top_chats("opencode")
-        self.assertEqual([(s["name"], s["cost"], s["model"]) for s in result],
-                         [("Paid", 3, "paid-model"), ("Mixed", 2, "paid-small")])
+    def test_missing_opencode_database_reports_an_error(self):
+        with tempfile.TemporaryDirectory() as data_home, patch.object(collector, "DATA_HOME", data_home):
+            with self.assertRaisesRegex(RuntimeError, "OpenCode database not found"):
+                collector.opencode()
+
+    def _claude_home(self, root, rows):
+        project = Path(root, ".claude/projects/-Users-me-app")
+        project.mkdir(parents=True)
+        with open(project / "sess1.jsonl", "w") as f:
+            for when, model, usage, mid in rows:
+                f.write(json.dumps({"type": "assistant", "timestamp": when.astimezone(collector.timezone.utc).isoformat().replace("+00:00", "Z"),
+                                    "requestId": f"req_{mid}", "sessionId": "sess1",
+                                    "message": {"id": mid, "model": model, "usage": usage}}) + "\n")
+            f.write(json.dumps({"type": "custom-title", "customTitle": "My chat"}) + "\n")
+
+    def test_claude_prices_tokens_dedupes_messages_and_ranks_chats(self):
+        now = collector.datetime.now().astimezone()
+        usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_input_tokens": 1_000_000,
+                 "cache_creation_input_tokens": 1_000_000, "cache_creation": {"ephemeral_1h_input_tokens": 400_000}}
+        with tempfile.TemporaryDirectory() as root:
+            self._claude_home(root, [(now, "claude-opus-5-5", usage, "m1"), (now, "claude-opus-5-5", usage, "m1"),
+                                     (now, "<synthetic>", usage, "m2"), (now, "claude-unknown-9", usage, "m3")])
+            with patch.object(collector, "HOME", root), patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": ""}), \
+                    patch.object(collector, "claude_quotas", return_value=[]):
+                result = collector.claude()
+        # 4 + 20 + 0.2 + 600k x 5 + 400k x 8 per million, counted once.
+        expected = 4 + 20 + 0.2 + 0.6 * 5 + 0.4 * 8
+        self.assertAlmostEqual(result["today"], expected, places=4)
+        self.assertEqual([m["name"] for m in result["models"]], ["claude-opus-5-5"])
+        self.assertEqual(result["chats"][0]["name"], "My chat")
+        self.assertEqual(result["chats"][0]["model"], "claude-opus-5-5")
+
+    def test_claude_quotas_parse_windows_and_clamp(self):
+        quotas = collector.parse_claude_quotas({
+            "five_hour": {"utilization": 42.5, "resets_at": "2026-11-06T18:00:00.000000+00:00"},
+            "seven_day": {"utilization": 130, "resets_at": None},
+            "seven_day_opus": {"utilization": 5}})
+        self.assertEqual([(q["id"], q["usedPercent"], q["windowMins"]) for q in quotas],
+                         [("claude-five_hour", 42.5, 300), ("claude-seven_day", 100.0, 10080)])
+        self.assertEqual(quotas[0]["resetsAt"], 1793988000.0)
+        self.assertIsNone(quotas[1]["resetsAt"])
+        self.assertEqual(collector.parse_claude_quotas(None), [])
+        self.assertEqual(collector.parse_claude_quotas({"five_hour": {"utilization": "n/a"}}), [])
+
+    def test_claude_quotas_are_hidden_without_a_subscription_token(self):
+        def keychain(payload, code=0):
+            return patch.object(collector.subprocess, "run", return_value=subprocess.CompletedProcess([], code, json.dumps(payload), ""))
+        with keychain({"mcpOAuth": {"other": {"accessToken": "x"}}}):
+            self.assertIsNone(collector.claude_oauth_token())
+        with keychain({"claudeAiOauth": {"accessToken": "t", "expiresAt": 1}}):
+            self.assertIsNone(collector.claude_oauth_token())
+        with keychain({"claudeAiOauth": {"accessToken": "t"}}, code=44):
+            self.assertIsNone(collector.claude_oauth_token())
+        with keychain({"claudeAiOauth": {"accessToken": "t", "expiresAt": (time.time() + 3600) * 1000}}):
+            self.assertEqual(collector.claude_oauth_token(), "t")
+        with patch.object(collector, "claude_oauth_token", return_value=None):
+            self.assertEqual(collector.claude_quotas(), [])
+
+    def _spec_env(self, root, spec, files=None):
+        specs = Path(root, "tools")
+        specs.mkdir()
+        (specs / "mytool.json").write_text(json.dumps(spec))
+        return patch.object(collector, "PLUGIN_DIR", str(specs))
+
+    def test_tool_spec_reads_jsonl_with_reported_cost_and_dedupes(self):
+        now = collector.datetime.now().astimezone()
+        with tempfile.TemporaryDirectory() as root:
+            log = Path(root, "logs/a.jsonl")
+            log.parent.mkdir()
+            rows = [{"kind": "reply", "at": now.isoformat(), "mid": "1", "sid": "s1", "m": "big", "usage": {"usd": 0.5}},
+                    {"kind": "reply", "at": now.isoformat(), "mid": "1", "sid": "s1", "m": "big", "usage": {"usd": 0.5}},
+                    {"kind": "reply", "at": now.isoformat(), "mid": "2", "sid": "s2", "m": "small", "usage": {"usd": 0.25}},
+                    {"kind": "note", "at": now.isoformat(), "mid": "3", "sid": "s2", "m": "small", "usage": {"usd": 9}}]
+            log.write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n")
+            spec = {"id": "mytool", "name": "My Tool", "source": {"type": "jsonl", "glob": str(Path(root, "logs/*.jsonl"))},
+                    "where": [{"path": "kind", "equals": "reply"}],
+                    "fields": {"timestamp": "at", "model": "m", "session": "sid", "cost": "usage.usd", "id": "mid"}}
+            with self._spec_env(root, spec):
+                sources = collector.plugin_sources()
+                self.assertEqual([(s[0], s[1]) for s in sources], [("mytool", "My Tool")])
+                result = sources[0][2]()
+        self.assertAlmostEqual(result["today"], 0.75)
+        self.assertEqual([(c["name"], c["cost"], c["model"]) for c in result["chats"]], [("s1", 0.5, "big"), ("s2", 0.25, "small")])
+        self.assertEqual({m["name"] for m in result["models"]}, {"big", "small"})
+
+    def test_tool_spec_prices_tokens_when_no_cost_is_reported(self):
+        now_ms = int(time.time() * 1000)
+        with tempfile.TemporaryDirectory() as root:
+            db_path = Path(root, "tool.db")
+            db = sqlite3.connect(db_path)
+            db.execute("CREATE TABLE msg (ts INTEGER, model TEXT, sid TEXT, tin INTEGER, tout INTEGER)")
+            db.execute("INSERT INTO msg VALUES (?,?,?,?,?)", (now_ms, "fast-1", "s1", 1_000_000, 500_000))
+            db.commit()
+            db.close()
+            spec = {"id": "mytool", "name": "My Tool", "timeUnit": "ms",
+                    "source": {"type": "sqlite", "path": str(db_path),
+                               "query": "SELECT ts AS timestamp, model, sid AS session, tin AS input, tout AS output FROM msg"},
+                    "pricing": {"models": {"fast": {"input": 1, "output": 4}}, "default": {"input": 10, "output": 10}}}
+            with self._spec_env(root, spec):
+                result = collector.plugin_sources()[0][2]()
+        self.assertAlmostEqual(result["today"], 1 + 2)
+
+    def test_invalid_tool_specs_surface_as_errors_and_cannot_shadow_builtins(self):
+        with tempfile.TemporaryDirectory() as root:
+            specs = Path(root, "tools")
+            specs.mkdir()
+            (specs / "claude.json").write_text(json.dumps({"id": "claude", "name": "X", "source": {"type": "jsonl", "glob": "x"},
+                                                           "fields": {"timestamp": "t"}}))
+            (specs / "broken.json").write_text("{nope")
+            with patch.object(collector, "PLUGIN_DIR", str(specs)):
+                loaded, problems = collector.load_tool_specs()
+                self.assertEqual(loaded, [])
+                self.assertIn("built in", problems["claude.json"])
+                self.assertIn("not readable JSON", problems["broken.json"])
+                results = {s[0]: collector.collect(s) for s in collector.plugin_sources()}
+        self.assertEqual(set(results), {"spec-claude", "spec-broken"})
+        self.assertIn("Invalid tool spec", results["spec-claude"]["error"])
+
+    def test_dig_walks_dicts_and_lists(self):
+        self.assertEqual(collector.dig({"a": {"b": [{"c": 7}]}}, "a.b.0.c"), 7)
+        self.assertIsNone(collector.dig({"a": 1}, "a.b"))
+        self.assertIsNone(collector.dig({"a": [1]}, "a.5"))
+
+    def test_claude_price_matches_model_families(self):
+        self.assertEqual(collector.claude_price("claude-opus-5-5"), (4, 20, 5, 0.2))
+        self.assertEqual(collector.claude_price("claude-sonnet-4-5-20250929"), (3, 15, 3.75, 0.3))
+        self.assertIsNone(collector.claude_price("gpt-5"))
 
     def test_opencode_titles_support_each_schema_and_xdg_path(self):
         with tempfile.TemporaryDirectory() as data_home:
@@ -157,14 +284,10 @@ class CollectorTests(unittest.TestCase):
             with patch.object(collector, "DATA_HOME", data_home):
                 self.assertEqual(collector.opencode_titles(["old"]), {})
 
-    def test_free_only_usage_is_zero_and_missing_breakdown_is_an_error(self):
-        self.assertEqual(collector.paid_breakdowns({"totalCost": 99, "modelBreakdowns": [
-            {"modelName": "provider/model-free", "cost": 99}]}), [])
-        self.assertEqual(collector.paid_breakdowns({"totalCost": 0}), [])
-        with self.assertRaisesRegex(RuntimeError, "cannot exclude free"):
-            collector.paid_breakdowns({"totalCost": 99})
+    def test_free_model_names(self):
         self.assertFalse(collector.is_free_model("deepseek-v4.1-flash"))
         self.assertTrue(collector.is_free_model("provider/free"))
+        self.assertTrue(collector.is_free_model("nemotron-super-free"))
 
     def test_absent_tools_hidden_and_data_tools_detected(self):
         real_isdir = os.path.isdir
@@ -294,19 +417,12 @@ for line in sys.stdin:
             command=[sys.executable, "-c", "import sys; print('collector failed',file=sys.stderr); sys.exit(7)"])
         self.assertEqual(failed["error"], "collector failed")
 
-    def test_burn_rate_uses_cost_over_elapsed_block_time(self):
-        started = collector.datetime.now(collector.timezone.utc) - collector.timedelta(hours=2)
-        block = {"startTime": started.isoformat().replace("+00:00", "Z"), "costUSD": 10.0,
-                 "burnRate": {"costPerHour": 999}}
-        with patch.object(collector, "ccusage_json", return_value={"blocks": [block]}):
-            self.assertAlmostEqual(collector.burn_rate("claude"), 5.0, delta=0.1)
-        with patch.object(collector, "ccusage_json", return_value={"blocks": []}):
-            self.assertEqual(collector.burn_rate("claude"), 0.0)
-
-    def test_missing_ccusage_reports_install_hint(self):
-        with patch.object(collector.subprocess, "run", side_effect=FileNotFoundError):
-            with self.assertRaisesRegex(RuntimeError, "bun add -g ccusage"):
-                collector.ccusage_json("claude", "daily")
+    def test_active_block_rate_uses_cost_over_elapsed_block_time(self):
+        now = collector.datetime.now().astimezone()
+        entries = [{"when": now - collector.timedelta(hours=2), "cost": 10.0}]
+        self.assertAlmostEqual(collector.active_block_rate(entries), 5.0, delta=1.5)
+        self.assertEqual(collector.active_block_rate([{"when": now - collector.timedelta(hours=9), "cost": 10.0}]), 0.0)
+        self.assertEqual(collector.active_block_rate([]), 0.0)
 
     def test_deepseek_prices_peak_hours_and_aliases(self):
         usage = {"inputTokens": 1_000_000, "cacheReadTokens": 1_000_000, "outputTokens": 1_000_000}

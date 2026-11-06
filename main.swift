@@ -67,6 +67,10 @@ enum L10n {
         .pt: [
             "%@ unavailable": "%@ indisponível",
             "%@ no quota": "%@ sem cota",
+"Cursor needs Keychain access": "O Cursor precisa de acesso ao Keychain",
+"To read your Cursor usage, AI Usage asks macOS for the \"Cursor Safe Storage\" Keychain item. When macOS asks, choose Always Allow so it does not ask on every refresh. Only Cursor's own usage service is contacted.": "Para ler seu uso do Cursor, o AI Usage pede ao macOS o item \"Cursor Safe Storage\" do Keychain. Quando o macOS perguntar, escolha Sempre Permitir para não perguntar a cada atualização. Só o serviço de uso do próprio Cursor é contatado.",
+"Continue": "Continuar",
+"Skip Cursor": "Pular o Cursor",
             "%@ %@%% left": "%@ %@%% livre",
             "%@ %@%% used": "%@ %@%% usado",
             "Global %@%% used": "Global %@%% usado",
@@ -169,6 +173,10 @@ enum L10n {
         .es: [
             "%@ unavailable": "%@ no disponible",
             "%@ no quota": "%@ sin cuota",
+"Cursor needs Keychain access": "Cursor necesita acceso al Llavero",
+"To read your Cursor usage, AI Usage asks macOS for the \"Cursor Safe Storage\" Keychain item. When macOS asks, choose Always Allow so it does not ask on every refresh. Only Cursor's own usage service is contacted.": "Para leer tu uso de Cursor, AI Usage pide a macOS el elemento \"Cursor Safe Storage\" del Llavero. Cuando macOS pregunte, elige Permitir siempre para que no pregunte en cada actualización. Solo se contacta el servicio de uso del propio Cursor.",
+"Continue": "Continuar",
+"Skip Cursor": "Omitir Cursor",
             "%@ %@%% left": "%@ %@%% libre",
             "%@ %@%% used": "%@ %@%% usado",
             "Global %@%% used": "Global %@%% usado",
@@ -325,6 +333,7 @@ struct Usage: Codable {
                 let used = tool.quotas?.map(\.usedPercent).max() ?? 0
                 return used >= 80 ? (0, -used) : (2, -used)
             }
+            if let used = tool.quotas?.map(\.usedPercent).max(), used >= 80 { return (0, -used) }
             return (1, -tool.today)
         }
         let ids = pinnedIds
@@ -618,10 +627,33 @@ final class Store: ObservableObject {
     init(cachedOnly: Bool = false) {
         usage = try? Self.decoder.decode(Usage.self, from: Data(contentsOf: cache))
         guard !cachedOnly else { return }
-        refresh()
+        if needsKeychainNotice {
+            Task { @MainActor [weak self] in self?.explainKeychainAccess(); self?.refresh() }
+        } else {
+            refresh()
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refresh() }
         }
+    }
+
+    private static let keychainNoticeKey = "keychainNoticeShown"
+
+    private var needsKeychainNotice: Bool {
+        !UserDefaults.standard.bool(forKey: Self.keychainNoticeKey) && FileManager.default.fileExists(
+            atPath: NSHomeDirectory() + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+    }
+
+    /// One-time heads-up before macOS shows its Keychain prompt for Cursor, so the prompt does not look unexpected.
+    @MainActor private func explainKeychainAccess() {
+        UserDefaults.standard.set(true, forKey: Self.keychainNoticeKey)
+        let alert = NSAlert()
+        alert.messageText = tr("Cursor needs Keychain access")
+        alert.informativeText = tr("To read your Cursor usage, AI Usage asks macOS for the \"Cursor Safe Storage\" Keychain item. When macOS asks, choose Always Allow so it does not ask on every refresh. Only Cursor's own usage service is contacted.")
+        alert.addButton(withTitle: tr("Continue"))
+        alert.addButton(withTitle: tr("Skip Cursor"))
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertSecondButtonReturn { setToolEnabled(id: "cursor", enabled: false) }
     }
 
     static let decoder: JSONDecoder = {
@@ -1399,6 +1431,9 @@ struct ContentView: View {
             parts.append(tr("%@%% of budget", (spent / budget.amount * 100).percentValue))
         }
         if let rate = tool.rate, rate > 0.5 { parts.append("\(rate.shortDollars)/h") }
+        if let quotas = tool.quotas, !quotas.isEmpty {
+            parts.append(quotas.map { "\($0.shortTitle) \($0.usedPercent.percentValue)%" }.joined(separator: " "))
+        }
         return parts.isEmpty ? (tool.id == "opencode" ? tr("Paid models") : tr("Local usage")) : parts.joined(separator: " · ")
     }
 
@@ -1439,6 +1474,7 @@ struct ContentView: View {
             } else if tool.mode == "quota" {
                 ForEach(tool.quotas ?? []) { quota in quotaRow(quota, tool: tool) }
             } else if tool.error == nil {
+                ForEach(tool.quotas ?? []) { quota in quotaRow(quota, tool: tool) }
                 costDetails(tool)
             }
             toolMenu(tool)

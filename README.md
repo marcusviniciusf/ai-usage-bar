@@ -35,6 +35,7 @@ Universal (Apple Silicon + Intel), macOS 14+. No Node, no webview, no account, n
 - **Budgets:** optional daily or monthly USD budget per tool plus a global daily budget, with alerts at 80% and 100% and a pace forecast.
 - **Quota:** Codex 5-hour and weekly windows with a forecast of when you run out.
 - **Menu bar:** a combined summary, a fixed tool, or pin up to two tools, each with its own icon.
+- **Your own tools:** add any harness that logs tokens or cost to JSONL or SQLite with a small [JSON spec](docs/TOOL_SPECS.md), no code needed.
 - **Focus:** only the tools found on your Mac appear; turn any of them off in the gear menu.
 - **Languages:** English, Portuguese (Brasil) and Spanish.
 
@@ -63,7 +64,8 @@ Based on each project's README on 2026-11-05.
 
 Everything runs locally. Nothing is sent anywhere except to the tools' own services:
 
-- Claude Code and OpenCode: read from local logs through `ccusage`. API list-price estimates, not what a subscription bills.
+- Claude Code: reads `~/.claude/projects` and prices tokens at Anthropic's list rates. OpenCode: reads the per-message cost in its local SQLite database. Both are estimates of API cost, not what a subscription bills.
+- Claude Code quota (5-hour and weekly windows): if you signed in to Claude Code with a subscription, the app reads that token from the "Claude Code-credentials" Keychain item and calls Anthropic's own usage endpoint. It is read-only and hidden when no subscription token exists.
 - DeepSeek: reads `~/.dsh/sessions`; nothing leaves the Mac.
 - Codex: the official local `codex app-server` quota call.
 - Cursor: uses your existing Cursor login. The app asks for the "Cursor Safe Storage" Keychain item (choose **Always Allow**, or macOS asks on every refresh) and calls the same undocumented `api2.cursor.sh` endpoint the Cursor usage page uses, so it can break if Cursor changes it. The decryption key is briefly passed to `/usr/bin/openssl` on the command line.
@@ -87,7 +89,7 @@ python3 tests/check_swift.py            # compiles old and current wire models
 ./scripts/package_release.sh 1.0.0      # release zip + SHA-256 in dist/
 ```
 
-Needs Xcode Command Line Tools. [Bun](https://bun.sh) or npm is only needed for Claude Code and OpenCode (installs `ccusage`).
+Needs Xcode Command Line Tools.
 
 ## More
 

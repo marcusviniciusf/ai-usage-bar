@@ -10,7 +10,7 @@ cd ai-usage-bar
 ./build.sh
 ```
 
-Requires macOS 14+ and Xcode Command Line Tools. Bun or npm is only needed for the Claude Code and OpenCode collectors (`ccusage`).
+Requires macOS 14+ and Xcode Command Line Tools.
 
 ## Before opening a PR
 

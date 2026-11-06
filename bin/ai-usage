@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Collect cost reports and subscription quotas for detected AI tools as JSON.
 
-Cursor comes from ~/.local/bin/cursor-spend (dashboard API); Claude and OpenCode from ccusage;
+Cursor comes from ~/.local/bin/cursor-spend (dashboard API); Claude from its local session logs and OpenCode from its SQLite database;
 DeepSeek from the DeepSeek Harness session logs in ~/.dsh/sessions, priced at its published API rates.
 Read by the AI Usage menu bar app. Prints one JSON object to stdout.
 """
@@ -11,6 +11,7 @@ import glob
 import math
 import os
 import tempfile
+import re
 import selectors
 import signal
 import shutil
@@ -110,8 +111,6 @@ def _tool_preference(config, tool_id):
 
 HISTORY_DAYS = 14
 ENV = {**os.environ, "PATH": f"{HOME}/.local/bin:{HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{os.environ.get('PATH', '')}"}
-CCUSAGE = shutil.which("ccusage", path=ENV["PATH"]) or "ccusage"
-BUN = shutil.which("bun", path=ENV["PATH"])
 
 today = date.today()
 week_start = today - timedelta(days=today.weekday())
@@ -361,30 +360,162 @@ def deepseek():
     }
 
 
-def ccusage_json(*args):
-    command = [BUN, "run", "--bun", CCUSAGE] if BUN else [CCUSAGE]
-    try:
-        result = subprocess.run([*command, *args, "--json"], capture_output=True, text=True, env=ENV, timeout=180)
-    except FileNotFoundError:
-        raise RuntimeError("ccusage not found. Install it: bun add -g ccusage (or npm install -g ccusage)")
-    if result.returncode:
-        raise RuntimeError(result.stderr.strip() or f"ccusage exited with status {result.returncode}")
-    out = result.stdout
-    return json.loads(out[out.find("{"):out.rfind("}") + 1])
+# USD per million tokens: input, output, cache write (5m), cache read. Anthropic list prices.
+CLAUDE_PRICES = {
+    "claude-opus-5-5": (4, 20, 5, 0.2),
+    "claude-sonnet-5-5": (2, 10, 2.5, 0.1),
+    "claude-haiku-5-5": (0.1, 0.5, 0.125, 0.01),
+    "claude-opus-4": (5, 25, 6.25, 0.5),
+    "claude-sonnet-4": (3, 15, 3.75, 0.3),
+    "claude-haiku-4": (1, 5, 1.25, 0.1),
+}
+BLOCK_HOURS = 5
 
 
-def burn_rate(agent):
-    """Cost per hour of the active 5h billing block, 0 when idle or unsupported."""
-    if agent == "opencode":
-        return 0.0  # No supported per-model block report to filter free usage safely.
-    try:
-        blocks = ccusage_json(agent, "blocks", "--active").get("blocks") or []
-        block = blocks[0] if blocks else {}
-        started = datetime.fromisoformat(block["startTime"].replace("Z", "+00:00"))
-        hours = max((datetime.now(started.tzinfo) - started).total_seconds() / 3600, 0.25)
-        return float(block.get("costUSD") or 0) / hours
-    except (KeyError, ValueError, IndexError, TypeError, RuntimeError, subprocess.SubprocessError):
+def claude_price(model):
+    for prefix in sorted(CLAUDE_PRICES, key=len, reverse=True):
+        if model.startswith(prefix):
+            return CLAUDE_PRICES[prefix]
+    return None
+
+
+def claude_cost(usage, rates):
+    """1-hour cache writes cost twice the input rate; 5-minute writes use the listed cache-write rate."""
+    price_in, price_out, price_write, price_read = rates
+    write = usage.get("cache_creation_input_tokens") or 0
+    hour = min((usage.get("cache_creation") or {}).get("ephemeral_1h_input_tokens") or 0, write)
+    return ((usage.get("input_tokens") or 0) * price_in + (usage.get("output_tokens") or 0) * price_out
+            + (write - hour) * price_write + hour * 2 * price_in + (usage.get("cache_read_input_tokens") or 0) * price_read) / 1e6
+
+
+def claude_roots():
+    configured = [p for p in os.environ.get("CLAUDE_CONFIG_DIR", "").split(",") if p.strip()]
+    roots = [os.path.join(p.strip(), "projects") for p in configured] or [
+        os.path.join(HOME, ".claude/projects"), os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "claude/projects")]
+    return [r for r in roots if os.path.isdir(r)]
+
+
+def claude_entries(since):
+    """One entry per API message with its USD cost. Files untouched since `since` are skipped."""
+    cutoff = datetime.combine(since, datetime.min.time()).timestamp()
+    seen = set()
+    for root in claude_roots():
+        for path in glob.glob(os.path.join(root, "*", "**", "*.jsonl"), recursive=True):
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    continue
+                project = os.path.relpath(path, root).split(os.sep)[0]
+                with open(path, errors="replace") as f:
+                    for line in f:
+                        if '"usage"' not in line or '"assistant"' not in line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                            message = row.get("message") or {}
+                            usage, model = message.get("usage"), message.get("model") or ""
+                            when = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")).astimezone()
+                        except (ValueError, KeyError, AttributeError, TypeError):
+                            continue
+                        if row.get("type") != "assistant" or not isinstance(usage, dict) or model.startswith("<"):
+                            continue
+                        key = (message.get("id"), row.get("requestId"))
+                        if key[0] and key[1]:
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                        rates = claude_price(model)
+                        cost = claude_cost(usage, rates) if rates else 0.0
+                        yield {"when": when, "model": model, "cost": cost, "session": row.get("sessionId") or os.path.basename(path)[:-6],
+                               "project": project, "known": rates is not None}
+            except OSError:
+                continue
+
+
+def active_block_rate(entries):
+    """Cost per hour of the active 5h billing block (blocks start at the hour of their first message)."""
+    start = end = None
+    cost = 0.0
+    for e in sorted(entries, key=lambda e: e["when"]):
+        if end is None or e["when"] >= end:
+            start = e["when"].replace(minute=0, second=0, microsecond=0)
+            end, cost = start + timedelta(hours=BLOCK_HOURS), 0.0
+        cost += e["cost"]
+    now = datetime.now().astimezone()
+    if end is None or now >= end:
         return 0.0
+    return cost / max((now - start).total_seconds() / 3600, 0.25)
+
+
+CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+CLAUDE_QUOTA_WINDOWS = (("five_hour", "5 horas", 300), ("seven_day", "Semanal", 10080))
+
+
+def claude_oauth_token():
+    """Subscription token from the Claude Code Keychain item, or None. Other services' entries in that item are never read."""
+    try:
+        result = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                                capture_output=True, text=True, timeout=20)
+        oauth = (json.loads(result.stdout).get("claudeAiOauth") or {}) if result.returncode == 0 else {}
+    except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
+        return None
+    expires = oauth.get("expiresAt")
+    if not oauth.get("accessToken") or (isinstance(expires, (int, float)) and expires / 1000 < time.time()):
+        return None
+    return oauth["accessToken"]
+
+
+def parse_claude_quotas(payload):
+    quotas = []
+    for key, label, minutes in CLAUDE_QUOTA_WINDOWS:
+        window = (payload or {}).get(key)
+        if not isinstance(window, dict) or not isinstance(window.get("utilization"), (int, float)):
+            continue
+        try:
+            resets = datetime.fromisoformat(window["resets_at"].replace("Z", "+00:00")).timestamp() if window.get("resets_at") else None
+        except (ValueError, AttributeError):
+            resets = None
+        quotas.append({"id": f"claude-{key}", "label": label, "usedPercent": min(100.0, max(0.0, float(window["utilization"]))),
+                       "resetsAt": resets, "windowMins": minutes})
+    return quotas
+
+
+def claude_quotas():
+    """5-hour and weekly subscription windows. Empty when not signed in with a subscription or when the call fails."""
+    import urllib.request
+    token = claude_oauth_token()
+    if not token:
+        return []
+    request = urllib.request.Request(CLAUDE_USAGE_URL, headers={"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20",
+                                                                "User-Agent": "ai-usage-bar"})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return parse_claude_quotas(json.load(response))
+    except (OSError, ValueError):
+        return []
+
+
+def claude():
+    entries = list(claude_entries(min(history_start, week_start, month_start)))
+    by_day, by_model, projects = defaultdict(float), defaultdict(float), {}
+    totals, models = defaultdict(float), defaultdict(lambda: defaultdict(float))
+    for e in entries:
+        day = e["when"].date()
+        by_day[day] += e["cost"]
+        totals[e["session"]] += e["cost"]
+        models[e["session"]][e["model"]] += e["cost"]
+        if day == today:
+            by_model[e["model"]] += e["cost"]
+            projects[e["session"]] = e["project"]
+    top = sorted((s for s in projects if totals[s] > 0), key=lambda s: -totals[s])[:3]
+    chats = [{"name": claude_title(projects[s], s), "cost": round(totals[s], 4),
+              "model": max(models[s], key=models[s].get).split("/")[-1]} for s in top]
+    recent = [e for e in entries if e["when"].date() >= today - timedelta(days=1)]
+    result = {**period_totals(by_day), "monthLabel": f"Since {month_start.strftime('%b %-d')}", "daily": history(by_day),
+              "models": top_models(by_model), "rate": active_block_rate(recent), "chats": chats}
+    quotas = claude_quotas()
+    if quotas:
+        result["quotas"] = quotas
+    return result
 
 
 def claude_title(project_path, session_id):
@@ -400,6 +531,56 @@ def claude_title(project_path, session_id):
     except (OSError, ValueError):
         pass
     return title or (prompt or "")[:60] or project_path.rsplit("-", 1)[-1]
+
+
+def is_free_model(name):
+    model = name.rsplit("/", 1)[-1].casefold()
+    return model == "free" or model.endswith(("-free", ":free"))
+
+
+def opencode():
+    """OpenCode stores the cost of each assistant message in its SQLite database."""
+    import sqlite3
+    path = os.path.join(DATA_HOME, "opencode/opencode.db")
+    if not os.path.exists(path):
+        raise RuntimeError("OpenCode database not found at ~/.local/share/opencode/opencode.db")
+    since = datetime.combine(min(history_start, week_start, month_start), datetime.min.time()).timestamp() * 1000
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    queries = (  # legacy `message` rows, then the current `session_message` rows
+        "SELECT session_id, json_extract(data,'$.modelID'), json_extract(data,'$.cost'), "
+        "COALESCE(json_extract(data,'$.time.created'), time_created) FROM message "
+        "WHERE json_extract(data,'$.role')='assistant' AND json_extract(data,'$.cost') > 0",
+        "SELECT session_id, json_extract(data,'$.model.id'), json_extract(data,'$.cost'), "
+        "COALESCE(json_extract(data,'$.time.created'), time_created) FROM session_message "
+        "WHERE type='assistant' AND json_extract(data,'$.cost') > 0")
+    rows = []
+    try:
+        for query in queries:
+            try:
+                rows += db.execute(query).fetchall()
+            except sqlite3.OperationalError:
+                continue
+    finally:
+        db.close()
+    by_day, by_model, sessions, totals = defaultdict(float), defaultdict(float), {}, defaultdict(float)
+    for session, model, cost, created in rows:
+        model = model or "?"
+        if is_free_model(model):
+            continue
+        day = datetime.fromtimestamp(created / 1000).date()
+        totals[session] += cost
+        sessions.setdefault(session, {})[model] = sessions.get(session, {}).get(model, 0) + cost
+        if created >= since:
+            by_day[day] += cost
+            if day == today:
+                by_model[model] += cost
+                sessions[session]["_today"] = 1
+    top = sorted((s for s in totals if sessions[s].get("_today")), key=lambda s: -totals[s])[:3]
+    titles = opencode_titles(top) if top else {}
+    chats = [{"name": titles.get(s) or s[:12], "cost": round(totals[s], 4),
+              "model": max((m for m in sessions[s] if m != "_today"), key=sessions[s].get).split("/")[-1]} for s in top]
+    return {**period_totals(by_day), "monthLabel": f"Since {month_start.strftime('%b %-d')}", "daily": history(by_day),
+            "models": top_models(by_model), "rate": 0.0, "chats": chats}
 
 
 def opencode_titles(ids):
@@ -426,67 +607,199 @@ def opencode_titles(ids):
     return titles
 
 
-def paid_breakdowns(row):
-    """OpenCode costs must be rebuilt per model; ccusage also prices free models."""
-    models = row.get("modelBreakdowns") or []
-    if not models and row.get("totalCost", 0):
-        raise RuntimeError("OpenCode model cost breakdown unavailable; cannot exclude free models safely")
-    return [m for m in models if not is_free_model(m["modelName"])]
+PLUGIN_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "ai-usage", "tools")
+BUILTIN_IDS = {"codex", "cursor", "claude", "opencode", "deepseek"}
+PLUGIN_ID = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
+PLUGIN_FIELDS = ("timestamp", "model", "session", "cost", "input", "output", "cacheRead", "cacheWrite", "id", "title")
 
 
-def is_free_model(name):
-    model = name.rsplit("/", 1)[-1].casefold()
-    return model == "free" or model.endswith(("-free", ":free"))
+def expand_path(path):
+    return os.path.expanduser(os.path.expandvars(path))
 
 
-def top_chats(agent):
-    """Most expensive sessions active today. A session's cost is its lifetime total, so a multi-day session counts fully."""
-    sessions = ccusage_json(agent, "session", "--since", today.strftime("%Y%m%d")).get("sessions", [])
-    if agent == "opencode":
-        filtered = []
-        for session in sessions:
-            models = sorted(paid_breakdowns(session), key=lambda m: -m.get("cost", 0))
-            filtered.append({**session, "totalCost": sum(m.get("cost", 0) for m in models),
-                             "modelsUsed": [m["modelName"] for m in models]})
-        sessions = filtered
-    top = sorted((s for s in sessions if s.get("totalCost", 0) > 0), key=lambda s: -s["totalCost"])[:3]
-    titles = opencode_titles([s["sessionId"] for s in top]) if agent == "opencode" and top else {}
-    chats = []
-    for s in top:
-        name = (claude_title(s.get("projectPath", ""), s["sessionId"]) if agent == "claude"
-                else titles.get(s["sessionId"]) or s["sessionId"][:12])
-        chats.append({"name": name, "cost": round(s["totalCost"], 4),
-                      "model": (s.get("modelsUsed") or ["?"])[0].split("/")[-1]})
-    return chats
+def dig(obj, path):
+    """Value at a dotted path such as `message.usage.input_tokens` or `parts.0.id`; None when absent."""
+    for part in str(path).split("."):
+        if isinstance(obj, list):
+            try:
+                obj = obj[int(part)]
+            except (ValueError, IndexError):
+                return None
+        elif isinstance(obj, dict):
+            obj = obj.get(part)
+        else:
+            return None
+        if obj is None:
+            return None
+    return obj
 
 
-def ccusage(agent):
-    since = min(history_start, week_start, month_start).strftime("%Y%m%d")
-    with ThreadPoolExecutor() as pool:
-        rate = pool.submit(burn_rate, agent)
-        chats = pool.submit(top_chats, agent)
-        days = ccusage_json(agent, "daily", "--since", since).get("daily", [])
+def number(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else 0.0
 
-    by_day, by_model = defaultdict(float), defaultdict(float)
-    for d in days:
-        day = date.fromisoformat(d["date"])
-        models = paid_breakdowns(d) if agent == "opencode" else d.get("modelBreakdowns", [])
-        by_day[day] += sum(m.get("cost", 0) for m in models) if agent == "opencode" else d.get("totalCost", 0)
+
+def validate_spec(spec):
+    """Return the reason a tool spec is unusable, or None."""
+    if not isinstance(spec, dict):
+        return "must be a JSON object"
+    if not PLUGIN_ID.match(str(spec.get("id", ""))):
+        return "id must be 2-32 chars: lowercase letters, digits, dashes, starting with a letter"
+    if spec["id"] in BUILTIN_IDS:
+        return f"id {spec['id']} is built in"
+    if not isinstance(spec.get("name"), str) or not spec["name"].strip():
+        return "name is required"
+    source = spec.get("source")
+    if not isinstance(source, dict) or source.get("type") not in ("jsonl", "sqlite"):
+        return "source.type must be jsonl or sqlite"
+    if source["type"] == "jsonl" and not isinstance(source.get("glob"), str):
+        return "jsonl sources need a glob"
+    if source["type"] == "sqlite" and not (isinstance(source.get("path"), str) and isinstance(source.get("query"), str)):
+        return "sqlite sources need a path and a query"
+    fields = spec.get("fields") if source["type"] == "jsonl" else {}
+    if source["type"] == "jsonl" and (not isinstance(fields, dict) or "timestamp" not in fields
+                                      or not set(fields) <= set(PLUGIN_FIELDS)):
+        return f"fields needs a timestamp and only these keys: {', '.join(PLUGIN_FIELDS)}"
+    if spec.get("timeUnit", "iso") not in ("iso", "ms", "s"):
+        return "timeUnit must be iso, ms or s"
+    return None
+
+
+def load_tool_specs(directory=None):
+    """(valid specs, {file: problem}) from the user's tool spec directory."""
+    specs, problems = [], {}
+    for path in sorted(glob.glob(os.path.join(directory or PLUGIN_DIR, "*.json"))):
+        try:
+            with open(path) as f:
+                spec = json.load(f)
+        except (OSError, ValueError) as err:
+            problems[os.path.basename(path)] = f"not readable JSON ({err})"
+            continue
+        problem = validate_spec(spec)
+        if problem:
+            problems[os.path.basename(path)] = problem
+        elif any(spec["id"] == other["id"] for other in specs):
+            problems[os.path.basename(path)] = f"duplicate id {spec['id']}"
+        else:
+            specs.append(spec)
+    return specs, problems
+
+
+def spec_present(spec):
+    source = spec["source"]
+    paths = spec.get("detect") or [source.get("glob") or source.get("path")]
+    return any(glob.glob(expand_path(p)) for p in paths if isinstance(p, str))
+
+
+def parse_time(value, unit):
+    if value is None:
+        raise ValueError("no timestamp")
+    if unit == "iso":
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone()
+    return datetime.fromtimestamp(number(value) / (1000 if unit == "ms" else 1)).astimezone()
+
+
+def spec_cost(spec, row):
+    """Reported cost times costScale, otherwise tokens priced per million from the spec's pricing table."""
+    fields, scale = spec.get("fields") or {}, number(spec.get("costScale", 1)) or 1
+    if row.get("cost") is not None and isinstance(row["cost"], (int, float)):
+        return number(row["cost"]) * scale
+    pricing = spec.get("pricing") or {}
+    model = str(row.get("model") or "")
+    rates = pricing.get("default") or {k: v for k, v in pricing.items() if k != "models"}
+    for prefix in sorted(pricing.get("models") or {}, key=len, reverse=True):
+        if model.startswith(prefix):
+            rates = pricing["models"][prefix]
+            break
+    return sum(number(row.get(k)) * number(rates.get(k)) for k in ("input", "output", "cacheRead", "cacheWrite")) / 1e6
+
+
+def spec_rows(spec, since):
+    source = spec["source"]
+    cutoff = datetime.combine(since, datetime.min.time()).timestamp()
+    if source["type"] == "jsonl":
+        fields, conditions = spec["fields"], spec.get("where") or []
+        for path in glob.glob(expand_path(source["glob"]), recursive=True):
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    continue
+                with open(path, errors="replace") as f:
+                    for line in f:
+                        try:
+                            obj = json.loads(line)
+                        except ValueError:
+                            continue
+                        if not isinstance(obj, dict) or any(dig(obj, c.get("path", "")) != c.get("equals") for c in conditions):
+                            continue
+                        row = {key: dig(obj, fields[key]) for key in fields}
+                        row.setdefault("session", None)
+                        row["session"] = row["session"] or os.path.basename(path)
+                        yield row
+            except OSError:
+                continue
+        return
+    import sqlite3
+    path = expand_path(source["path"])
+    if not os.path.exists(path):
+        return
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        cursor = db.execute(source["query"])
+        names = [d[0] for d in cursor.description]
+        for values in cursor:
+            yield dict(zip(names, values))
+    finally:
+        db.close()
+
+
+def spec_entries(spec, since):
+    unit, seen = spec.get("timeUnit", "iso"), set()
+    for row in spec_rows(spec, since):
+        try:
+            when = parse_time(row.get("timestamp"), unit)
+        except (ValueError, OverflowError, OSError):
+            continue
+        if row.get("id") is not None:
+            if row["id"] in seen:
+                continue
+            seen.add(row["id"])
+        yield {"when": when, "model": str(row.get("model") or "?"), "cost": spec_cost(spec, row),
+               "session": str(row.get("session") or "?"), "title": row.get("title")}
+
+
+def spec_usage(spec):
+    entries = list(spec_entries(spec, min(history_start, week_start, month_start)))
+    by_day, by_model, today_sessions = defaultdict(float), defaultdict(float), set()
+    totals, models, titles = defaultdict(float), defaultdict(lambda: defaultdict(float)), {}
+    for e in entries:
+        day = e["when"].date()
+        by_day[day] += e["cost"]
+        totals[e["session"]] += e["cost"]
+        models[e["session"]][e["model"]] += e["cost"]
+        if e["title"]:
+            titles[e["session"]] = str(e["title"])
         if day == today:
-            for m in models:
-                by_model[m["modelName"]] += m.get("cost", 0)
-    return {
-        **period_totals(by_day),
-        "monthLabel": f"Since {month_start.strftime('%b %-d')}",
-        "daily": history(by_day),
-        "models": top_models(by_model),
-        "rate": rate.result(),
-        "chats": chats.result(),
-    }
+            by_model[e["model"]] += e["cost"]
+            today_sessions.add(e["session"])
+    top = sorted((s for s in today_sessions if totals[s] > 0), key=lambda s: -totals[s])[:3]
+    chats = [{"name": (titles.get(s) or s)[:60], "cost": round(totals[s], 4),
+              "model": max(models[s], key=models[s].get).split("/")[-1]} for s in top]
+    return {**period_totals(by_day), "monthLabel": f"Since {month_start.strftime('%b %-d')}", "daily": history(by_day),
+            "models": top_models(by_model), "rate": 0.0, "chats": chats}
 
 
-SOURCES = [("cursor", "Cursor", cursor), ("claude", "Claude Code", lambda: ccusage("claude")),
-           ("opencode", "OpenCode", lambda: ccusage("opencode")), ("deepseek", "DeepSeek", deepseek)]
+def plugin_sources():
+    """Tools declared by JSON specs in ~/.config/ai-usage/tools. A broken spec shows up as a tool with an error."""
+    specs, problems = load_tool_specs()
+    sources = [(spec["id"], spec["name"].strip(), lambda spec=spec: spec_usage(spec)) for spec in specs if spec_present(spec)]
+    for filename, problem in problems.items():
+        def fail(filename=filename, problem=problem):
+            raise RuntimeError(f"Invalid tool spec {filename}: {problem}")
+        sources.append((f"spec-{os.path.splitext(filename)[0].lower()[:24]}", f"Spec {filename}", fail))
+    return sources
+
+
+SOURCES = [("cursor", "Cursor", cursor), ("claude", "Claude Code", claude),
+           ("opencode", "OpenCode", opencode), ("deepseek", "DeepSeek", deepseek)]
 COLLECTOR_TIMEOUT_SECONDS = 45
 
 
@@ -567,6 +880,10 @@ def codex():
         process.stdout.close()
 
 
+def known_tool_ids():
+    return {"codex", *(s[0] for s in SOURCES), *(spec["id"] for spec in load_tool_specs()[0])}
+
+
 def detected_sources():
     cursor_data = os.path.join(HOME, "Library/Application Support/Cursor/User/globalStorage/state.vscdb")
     claude_data = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.join(HOME, ".claude")), "projects")
@@ -576,7 +893,7 @@ def detected_sources():
                "opencode": os.path.isdir(opencode_data) or shutil.which("opencode", path=ENV["PATH"]) is not None,
                "deepseek": os.path.isdir(deepseek_sessions_dir())}
     sources = [("codex", "Codex", codex)] if codex_binary() else []
-    return sources + [s for s in SOURCES if present[s[0]]]
+    return sources + [s for s in SOURCES if present[s[0]]] + plugin_sources()
 
 
 def collect(source):
@@ -649,7 +966,7 @@ def main():
         return 0
     if len(sys.argv) >= 3 and sys.argv[1] == "--set-indicator":
         mode, ids = sys.argv[2], sys.argv[3:]
-        known = {"codex", *(s[0] for s in SOURCES)}
+        known = known_tool_ids()
         valid = ((mode in ("summary", "urgent") and len(ids) <= 1)
                  or (mode == "fixed" and len(ids) == 1 and ids[0] in known)
                  or (mode == "pinned" and 1 <= len(ids) <= 2 and len(set(ids)) == len(ids) and set(ids) <= known))
@@ -664,7 +981,7 @@ def main():
         return 0
     if len(sys.argv) == 4 and sys.argv[1] == "--set-alerts":
         tool_id, value = sys.argv[2:]
-        if tool_id not in {"codex", *(s[0] for s in SOURCES)} or value not in ("on", "off"):
+        if tool_id not in known_tool_ids() or value not in ("on", "off"):
             raise ValueError("Usage: ai-usage --set-alerts TOOL on|off")
         update_configuration(lambda config: _tool_preference(config, tool_id).__setitem__("alertsEnabled", value == "on"))
         print("Alert preference saved")
@@ -672,7 +989,7 @@ def main():
     if len(sys.argv) == 5 and sys.argv[1] == "--set-tool-budget":
         tool_id, period, value = sys.argv[2:]
         amount = float(value)
-        if tool_id not in {s[0] for s in SOURCES} or period not in ("daily", "monthly") or not math.isfinite(amount) or amount < 0:
+        if tool_id not in known_tool_ids() - {"codex"} or period not in ("daily", "monthly") or not math.isfinite(amount) or amount < 0:
             raise ValueError("Use a supported cost tool, daily|monthly and a non-negative amount (0 removes the budget)")
         update_configuration(lambda config: _tool_preference(config, tool_id).__setitem__(
             "budget", {"amount": amount, "period": period} if amount else None))
@@ -680,7 +997,7 @@ def main():
         return 0
     if len(sys.argv) == 4 and sys.argv[1] == "--set-tool-enabled":
         tool_id, value = sys.argv[2:]
-        if tool_id not in {"codex", *(s[0] for s in SOURCES)} or value not in ("on", "off"):
+        if tool_id not in known_tool_ids() or value not in ("on", "off"):
             raise ValueError("Usage: ai-usage --set-tool-enabled TOOL on|off")
         update_configuration(lambda config: _tool_preference(config, tool_id).__setitem__("enabled", value == "on"))
         print("Tool filter saved")

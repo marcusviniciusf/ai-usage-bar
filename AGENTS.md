@@ -22,7 +22,7 @@ python3 tests/check_swift.py          # compiles old and current wire models (rt
 ./build.sh                            # compile, install, relaunch the app
 ./scripts/build_app.sh /tmp/out       # bundle only, no install (CI uses this)
 ./scripts/package_release.sh 1.0.0    # dist/ zip + SHA-256 for a GitHub Release
-./install.sh                          # collectors to ~/.local/bin, ccusage, then build
+./install.sh                          # collectors to ~/.local/bin, then build
 ~/Applications/AI\ Usage.app/Contents/MacOS/AIUsage --snapshot /tmp/out.png Today
 ```
 
