@@ -419,8 +419,10 @@ for line in sys.stdin:
 
     def test_active_block_rate_uses_cost_over_elapsed_block_time(self):
         now = collector.datetime.now().astimezone()
-        entries = [{"when": now - collector.timedelta(hours=2), "cost": 10.0}]
-        self.assertAlmostEqual(collector.active_block_rate(entries), 5.0, delta=1.5)
+        started = (now - collector.timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
+        entries = [{"when": started + collector.timedelta(minutes=5), "cost": 10.0}]
+        hours = (collector.datetime.now().astimezone() - started).total_seconds() / 3600
+        self.assertAlmostEqual(collector.active_block_rate(entries), 10.0 / hours, delta=0.01)
         self.assertEqual(collector.active_block_rate([{"when": now - collector.timedelta(hours=9), "cost": 10.0}]), 0.0)
         self.assertEqual(collector.active_block_rate([]), 0.0)
 

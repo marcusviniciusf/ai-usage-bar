@@ -1166,7 +1166,8 @@ struct ContentView: View {
         }
         .padding(12)
         .frame(width: 340)
-        .frame(maxHeight: .infinity, alignment: .top)
+        // The panel window follows the content's ideal height; a flexible height makes it grow but never shrink.
+        .fixedSize(horizontal: false, vertical: true)
         .background(Theme.background)
         .environment(\.colorScheme, .dark)
         .environment(\.locale, L10n.locale)
