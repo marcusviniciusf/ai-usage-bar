@@ -15,11 +15,30 @@
 
 ## Install
 
+### Homebrew
+
 ```bash
+brew trust marcusviniciusf/tap
 brew install --cask marcusviniciusf/tap/ai-usage
 ```
 
-Or download `AIUsage-<version>-macos-universal.zip` from [Releases](https://github.com/marcusviniciusf/ai-usage-bar/releases/latest) and move **AI Usage.app** to Applications. The build is ad-hoc signed (no paid Apple Developer ID), so macOS asks once: **System Settings → Privacy & Security → Open Anyway**, or right-click the app → Open.
+Homebrew 7 only loads casks from taps you trust, hence the first line. `brew upgrade` picks up new releases.
+
+### Download
+
+1. Download `AIUsage-<version>-macos-universal.zip` from [Releases](https://github.com/marcusviniciusf/ai-usage-bar/releases/latest).
+2. Move **AI Usage.app** to Applications.
+3. The build is ad-hoc signed (no paid Apple Developer ID), so macOS blocks the first launch once: open **System Settings → Privacy & Security → Open Anyway**, or right-click the app → Open.
+
+### From source
+
+```bash
+git clone https://github.com/marcusviniciusf/ai-usage-bar.git
+cd ai-usage-bar
+./install.sh
+```
+
+Needs Xcode Command Line Tools. Builds the app into `~/Applications` and launches it; turn on **Launch at login** in the gear menu.
 
 Universal (Apple Silicon + Intel), macOS 14+. No Node, no webview, no account, no telemetry. The collectors ship inside the app bundle.
 
@@ -86,7 +105,7 @@ cd ai-usage-bar
 ./build.sh                              # build universal app + relaunch
 python3 -m unittest discover -s tests -v
 python3 tests/check_swift.py            # compiles old and current wire models
-./scripts/package_release.sh 1.0.0      # release zip + SHA-256 in dist/
+./scripts/package_release.sh 1.1.0      # release zip + SHA-256 in dist/
 ```
 
 Needs Xcode Command Line Tools.
