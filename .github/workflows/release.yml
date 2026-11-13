@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test
+        run: |
+          python3 -m unittest discover -s tests
+          python3 tests/check_swift.py
+
+      - name: Package
+        run: ./scripts/package_release.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Release notes from the changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          printf '\nInstall: `brew install --cask marcusviniciusf/tap/ai-usage`\n' >> "$RUNNER_TEMP/notes.md"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" dist/AIUsage-$VERSION-macos-universal.zip dist/AIUsage-$VERSION-macos-universal.zip.sha256 \
+            --title "AI Usage $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+      # Points the shared Homebrew tap at the new zip. Needs a TAP_TOKEN secret with write access to homebrew-tap.
+      - name: Update Homebrew cask
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then echo "TAP_TOKEN not set; update the cask by hand"; exit 0; fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA=$(shasum -a 256 dist/AIUsage-$VERSION-macos-universal.zip | awk '{print $1}')
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/marcusviniciusf/homebrew-tap.git" "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/; s/^  sha256 .*/  sha256 \"$SHA\"/" Casks/ai-usage.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "ai-usage $VERSION" && git push origin HEAD || echo "Cask already up to date"

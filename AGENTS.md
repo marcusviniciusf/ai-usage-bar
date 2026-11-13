@@ -21,7 +21,7 @@ python3 -m unittest discover -s tests -v
 python3 tests/check_swift.py          # compiles old and current wire models (rtk optional)
 ./build.sh                            # compile, install, relaunch the app
 ./scripts/build_app.sh /tmp/out       # bundle only, no install (CI uses this)
-./scripts/package_release.sh 1.0.0    # dist/ zip + SHA-256 for a GitHub Release
+./scripts/package_release.sh 1.1.0    # dist/ zip + SHA-256 for a GitHub Release
 ./install.sh                          # collectors to ~/.local/bin, then build
 ~/Applications/AI\ Usage.app/Contents/MacOS/AIUsage --snapshot /tmp/out.png Today
 ```
@@ -29,7 +29,7 @@ python3 tests/check_swift.py          # compiles old and current wire models (rt
 ## Constraints
 
 - The app launches the collector with `/usr/bin/python3` (3.9) and prefers the copy inside its own bundle; `~/.local/bin/ai-usage` is only a dev fallback.
-- Release flow: bump `CHANGELOG.md`, tag `vX.Y.Z`, run `scripts/package_release.sh X.Y.Z`, `gh release create`, then update `version`/`sha256` in the cask at `marcusviniciusf/homebrew-tap`. Ad-hoc signing is intentional; there is no Developer ID.
+- Release flow: move `[Unreleased]` in `CHANGELOG.md` to `[X.Y.Z]`, bump the default in `scripts/build_app.sh`, then push tag `vX.Y.Z`. `.github/workflows/release.yml` tests, packages, publishes the release with the changelog section as notes, and updates the cask in `marcusviniciusf/homebrew-tap` when the `TAP_TOKEN` secret exists (otherwise update `version`/`sha256` there by hand). Ad-hoc signing is intentional; there is no Developer ID.
 - Reads must stay read-only towards provider accounts: never start a turn, change auth, reset credits, or spend money.
 - Costs from local logs are API list-price estimates, never invoices or account balances; label them that way in UI and docs.
 - Nothing leaves the Mac except calls to the providers' own endpoints (Cursor dashboard, `codex app-server`, DeepSeek logs stay local).
