@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${AI_USAGE_VERSION:-1.1.0}"
+VERSION="${AI_USAGE_VERSION:-1.2.0}"
 OUT="${1:-build}"
 ARCHS="${AI_USAGE_ARCHS:-arm64 x86_64}"
 WORK="$(mktemp -d)"

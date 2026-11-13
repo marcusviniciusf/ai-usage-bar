@@ -105,7 +105,7 @@ cd ai-usage-bar
 ./build.sh                              # build universal app + relaunch
 python3 -m unittest discover -s tests -v
 python3 tests/check_swift.py            # compiles old and current wire models
-./scripts/package_release.sh 1.1.0      # release zip + SHA-256 in dist/
+./scripts/package_release.sh 1.2.0      # release zip + SHA-256 in dist/
 ```
 
 Needs Xcode Command Line Tools.
