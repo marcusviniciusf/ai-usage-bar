@@ -1,6 +1,6 @@
 # AI Usage
 
-**Spend, budgets and subscription quota for your AI coding tools — in the macOS menu bar.** One native popover for Cursor, Claude Code, OpenCode, Codex and DeepSeek.
+**Spend, budgets and subscription quota for your AI coding tools — in the macOS menu bar.** One native popover for Cursor, Claude Code, OpenCode, Codex, DeepSeek and Pi, plus any harness you describe in a JSON spec.
 
 [![CI](https://github.com/marcusviniciusf/ai-usage-bar/actions/workflows/ci.yml/badge.svg)](https://github.com/marcusviniciusf/ai-usage-bar/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/marcusviniciusf/ai-usage-bar?color=0a0a0c)](https://github.com/marcusviniciusf/ai-usage-bar/releases/latest)
@@ -71,7 +71,7 @@ Based on each project's README on 2026-11-05.
 | | AI Usage | [CodexBar](https://github.com/steipete/CodexBar) | [TokenTracker](https://github.com/xiufengsun/TokenTracker) | [ccusage](https://github.com/ccusage/ccusage) |
 |---|---|---|---|---|
 | Interface | Native popover | Native menu bar | Desktop app + webview | Terminal CLI |
-| Tools | 5 | 111 providers | 47 tools | Multi-agent CLI |
+| Tools | 6 + JSON specs | 111 providers | 47 tools | Multi-agent CLI |
 | DeepSeek spend | Local sessions, peak/off-peak | Balance via API key | Local sessions, flat price table | Via agent logs |
 | Per-tool USD budget + alerts | ✅ | Partial, where the API exposes it | ❌ | ❌ |
 | Runtime dependency | None (Swift) | None (Swift) | Node + webview | Node |

@@ -248,6 +248,39 @@ class CollectorTests(unittest.TestCase):
         self.assertIsNone(collector.dig({"a": 1}, "a.b"))
         self.assertIsNone(collector.dig({"a": [1]}, "a.5"))
 
+    def test_pi_counts_forked_entries_once_and_includes_usage_entries(self):
+        now = collector.datetime.now(collector.timezone.utc).isoformat().replace("+00:00", "Z")
+        def cost(total):
+            return {"input": 1000, "output": 200, "cost": {"total": total}}
+        original = [
+            {"type": "session", "version": 3, "id": "s-original", "timestamp": now, "cwd": "/p"},
+            {"type": "session_info", "id": "i1", "timestamp": now, "name": "Refactor auth"},
+            {"type": "message", "id": "u1", "timestamp": now, "message": {"role": "user", "content": "hi"}},
+            {"type": "message", "id": "a1", "timestamp": now, "message": {"role": "assistant", "model": "claude-sonnet-4-5", "usage": cost(0.10)}},
+            {"type": "usage", "id": "w1", "timestamp": now, "kind": "cache_warm", "model": "claude-sonnet-4-5", "usage": cost(0.02)},
+            {"type": "message", "id": "a2", "timestamp": now, "message": {"role": "assistant", "model": "gpt-5", "usage": cost(0.30)}},
+        ]
+        fork = [{**original[0], "id": "s-fork", "parentSession": "x"}] + original[1:] + [
+            {"type": "message", "id": "a3", "timestamp": now, "message": {"role": "assistant", "model": "claude-sonnet-4-5", "usage": cost(0.05)}},
+            {"type": "compaction", "id": "c1", "timestamp": now, "summary": "s", "firstKeptEntryId": "a3", "usage": cost(0.01)},
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            project = Path(root, "--p--")
+            project.mkdir()
+            for name, rows in (("2026-11-13T10-00-00-000Z_orig.jsonl", original), ("2026-11-13T10-00-01-000Z_fork.jsonl", fork)):
+                (project / name).write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            with patch.dict(os.environ, {"PI_CODING_AGENT_SESSION_DIR": root}):
+                result = collector.pi()
+        self.assertAlmostEqual(result["today"], 0.48)
+        self.assertEqual({m["name"]: m["cost"] for m in result["models"]},
+                         {"gpt-5": 0.3, "claude-sonnet-4-5": 0.17, "compaction": 0.01})
+        self.assertEqual([(c["name"], c["cost"]) for c in result["chats"]], [("Refactor auth", 0.42), ("Refactor auth", 0.06)])
+
+    def test_pi_missing_sessions_dir_is_an_error(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"PI_CODING_AGENT_SESSION_DIR": os.path.join(root, "none")}):
+            with self.assertRaisesRegex(RuntimeError, "Pi sessions not found"):
+                collector.pi()
+
     def test_claude_price_matches_model_families(self):
         self.assertEqual(collector.claude_price("claude-opus-5-5"), (4, 20, 5, 0.2))
         self.assertEqual(collector.claude_price("claude-sonnet-4-5-20250929"), (3, 15, 3.75, 0.3))

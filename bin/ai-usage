@@ -2,7 +2,8 @@
 """Collect cost reports and subscription quotas for detected AI tools as JSON.
 
 Cursor comes from ~/.local/bin/cursor-spend (dashboard API); Claude from its local session logs and OpenCode from its SQLite database;
-DeepSeek from the DeepSeek Harness session logs in ~/.dsh/sessions, priced at its published API rates.
+DeepSeek from the DeepSeek Harness session logs in ~/.dsh/sessions, priced at its published API rates;
+Pi from the cost it records in ~/.pi/agent/sessions.
 Read by the AI Usage menu bar app. Prints one JSON object to stdout.
 """
 import json
@@ -607,8 +608,70 @@ def opencode_titles(ids):
     return titles
 
 
+def pi_sessions_dir():
+    return expand_path(os.environ.get("PI_CODING_AGENT_SESSION_DIR") or os.path.join(HOME, ".pi/agent/sessions"))
+
+
+def pi_entries(since):
+    """Usage-bearing Pi entries with their USD cost. Forks copy entries with the same id, so each id counts once."""
+    cutoff = datetime.combine(since, datetime.min.time()).timestamp()
+    seen = set()
+    # Timestamp-prefixed names sort originals before their forks, so copied entries stay with the source session.
+    for path in sorted(glob.glob(os.path.join(pi_sessions_dir(), "**", "*.jsonl"), recursive=True), key=os.path.basename):
+        try:
+            if os.path.getmtime(path) < cutoff:
+                continue
+            session, title = os.path.basename(path)[:-6], None
+            with open(path, errors="replace") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    kind = entry.get("type")
+                    if kind == "session":
+                        session = entry.get("id") or session
+                        continue
+                    if kind == "session_info" and entry.get("name"):
+                        title = entry["name"]
+                        continue
+                    message = entry.get("message") if kind == "message" else None
+                    if message is not None and message.get("role") != "assistant":
+                        continue
+                    usage = (message or entry).get("usage")
+                    cost = (usage or {}).get("cost") if isinstance(usage, dict) else None
+                    if not isinstance(cost, dict) or not isinstance(cost.get("total"), (int, float)):
+                        continue
+                    key = (entry.get("id"), entry.get("timestamp"))
+                    if key[0]:
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                    try:
+                        when = datetime.fromisoformat(str(entry["timestamp"]).replace("Z", "+00:00")).astimezone()
+                    except (KeyError, ValueError):
+                        continue
+                    model = (message or entry).get("model") or kind
+                    yield {"when": when, "model": str(model), "cost": number(cost["total"]), "session": session, "title": title}
+        except OSError:
+            continue
+
+
+def pi():
+    if not os.path.isdir(pi_sessions_dir()):
+        raise RuntimeError("Pi sessions not found at ~/.pi/agent/sessions")
+    entries = list(pi_entries(min(history_start, week_start, month_start)))
+    titles = {}
+    for e in entries:
+        if e["title"]:
+            titles[e["session"]] = e["title"]
+    return spec_usage(None, entries=[{**e, "title": titles.get(e["session"])} for e in entries])
+
+
 PLUGIN_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "ai-usage", "tools")
-BUILTIN_IDS = {"codex", "cursor", "claude", "opencode", "deepseek"}
+BUILTIN_IDS = {"codex", "cursor", "claude", "opencode", "deepseek", "pi"}
 PLUGIN_ID = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
 PLUGIN_FIELDS = ("timestamp", "model", "session", "cost", "input", "output", "cacheRead", "cacheWrite", "id", "title")
 
@@ -766,8 +829,9 @@ def spec_entries(spec, since):
                "session": str(row.get("session") or "?"), "title": row.get("title")}
 
 
-def spec_usage(spec):
-    entries = list(spec_entries(spec, min(history_start, week_start, month_start)))
+def spec_usage(spec, entries=None):
+    if entries is None:
+        entries = list(spec_entries(spec, min(history_start, week_start, month_start)))
     by_day, by_model, today_sessions = defaultdict(float), defaultdict(float), set()
     totals, models, titles = defaultdict(float), defaultdict(lambda: defaultdict(float)), {}
     for e in entries:
@@ -799,7 +863,8 @@ def plugin_sources():
 
 
 SOURCES = [("cursor", "Cursor", cursor), ("claude", "Claude Code", claude),
-           ("opencode", "OpenCode", opencode), ("deepseek", "DeepSeek", deepseek)]
+           ("opencode", "OpenCode", opencode), ("deepseek", "DeepSeek", deepseek),
+           ("pi", "Pi", pi)]
 COLLECTOR_TIMEOUT_SECONDS = 45
 
 
@@ -891,7 +956,8 @@ def detected_sources():
     present = {"cursor": os.path.isfile(cursor_data) or os.path.isdir("/Applications/Cursor.app") or os.path.isdir(os.path.join(HOME, "Applications/Cursor.app")),
                "claude": os.path.isdir(claude_data) or shutil.which("claude", path=ENV["PATH"]) is not None,
                "opencode": os.path.isdir(opencode_data) or shutil.which("opencode", path=ENV["PATH"]) is not None,
-               "deepseek": os.path.isdir(deepseek_sessions_dir())}
+               "deepseek": os.path.isdir(deepseek_sessions_dir()),
+               "pi": os.path.isdir(pi_sessions_dir())}
     sources = [("codex", "Codex", codex)] if codex_binary() else []
     return sources + [s for s in SOURCES if present[s[0]]] + plugin_sources()
 

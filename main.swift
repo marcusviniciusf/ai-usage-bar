@@ -544,6 +544,7 @@ struct Tool: Codable, Identifiable {
         case "claude": [Color(hex: 0xFF9A6B), Color(hex: 0xE0603F)]
         case "codex": [Color(hex: 0xA6B8FF), Color(hex: 0x798DED)]
         case "deepseek": [Color(hex: 0x7E95FF), Color(hex: 0x4D6BFE)]
+        case "pi": [Color(hex: 0xF5C451), Color(hex: 0xE09A2B)]
         default: [Color(hex: 0x4BE3A4), Color(hex: 0x1FB57E)]
         }
     }
@@ -557,6 +558,7 @@ struct Tool: Codable, Identifiable {
         case "claude": "asterisk"
         case "codex": "chevron.left.forwardslash.chevron.right"
         case "deepseek": "brain.head.profile"
+        case "pi": "function"
         default: "terminal"
         }
     }

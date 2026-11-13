@@ -52,7 +52,7 @@ The database is opened read-only. The query must return columns named after the 
 
 | Key | Meaning |
 |---|---|
-| `id` | 2-32 chars: lowercase letters, digits, dashes. Cannot reuse `codex`, `cursor`, `claude`, `opencode`, `deepseek`. |
+| `id` | 2-32 chars: lowercase letters, digits, dashes. Cannot reuse `codex`, `cursor`, `claude`, `opencode`, `deepseek`, `pi`. |
 | `name` | Label shown in the app. |
 | `detect` | Optional list of paths; the tool is shown if any exists. Defaults to the source glob or path. |
 | `timeUnit` | `iso` (default), `ms` or `s` for the timestamp. |
